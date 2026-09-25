@@ -1,0 +1,166 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SoundCore</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+<div class="app-shell">
+  <aside class="sidebar">
+    <div class="brand">
+      <img src="../gui/assets/soundcore_icon.png" alt="SoundCore" />
+      <div class="brand-name"><span>Sound</span><b>Core</b></div>
+    </div>
+    <nav class="nav" id="nav">
+      <button class="nav-item active" data-page="dashboard"><span>⌂</span>Pulpit</button>
+      <button class="nav-item" data-page="synthesis"><span>◫</span>Synteza mowy</button>
+      <button class="nav-item" data-page="profiles"><span>◯</span>Profile głosu</button>
+      <button class="nav-item" data-page="training"><span>◎</span>Trening modelu</button>
+      <button class="nav-item" data-page="updates"><span>⇩</span>Aktualizacje</button>
+      <button class="nav-item" data-page="settings"><span>⚙</span>Ustawienia</button>
+    </nav>
+    <div class="promo-card">
+      <div class="promo-waves"><i></i><i></i><i></i></div>
+      <h3>Twórz naturalne głosy z pomocą AI</h3>
+      <p>Realistyczna synteza, własne modele, pełna kontrola.</p>
+      <button class="gradient-btn compact" data-goto="training">Rozpocznij trening →</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="topbar">
+      <div class="page-heading">
+        <h1 id="pageTitle">Pulpit</h1>
+        <p id="pageSubtitle">Witaj w SoundCore! Twórz, trenuj i zarządzaj swoimi modelami głosu.</p>
+      </div>
+      <div class="top-actions">
+        <div class="search"><span>⌕</span><input id="search" value="Szukaj profili, nagrań, projektów..." /></div>
+        <div class="notification-wrap">
+          <button class="icon-btn" id="bellBtn" title="Powiadomienia">♢<span class="badge" id="bellBadge">0</span></button>
+          <div class="notification-panel hidden" id="notificationPanel">
+            <div class="notification-head"><b>Powiadomienia</b><button id="markReadBtn">Oznacz jako przeczytane</button></div>
+            <div id="notificationList"></div>
+          </div>
+        </div>
+        <div class="user-chip">
+          <div class="avatar" id="userAvatar">U</div>
+          <div><b id="userName">Użytkownik</b><small id="userRole">Użytkownik</small></div>
+          <span>⌄</span>
+        </div>
+      </div>
+    </header>
+
+    <section class="page active" id="page-dashboard">
+      <div class="summary-grid">
+        <div class="summary-card"><div class="summary-icon blue">◯</div><div><small>Aktywny profil</small><strong id="summaryProfile">Brak profilu</strong><p id="summaryProfileSub">Dodaj profil, aby zacząć</p></div><span class="chev">›</span></div>
+        <div class="summary-card"><div class="summary-icon purple">◇</div><div><small>Model</small><strong>XTTS v2</strong><p>Fine-tune GPT · Wielojęzyczny</p></div></div>
+        <div class="summary-card"><div class="summary-icon green">▧</div><div><small>GPU/CPU</small><strong id="summaryGpu">Wykrywanie...</strong><p id="summaryGpuSub">Sprawdzanie sprzętu</p></div><span class="status-pill" id="gpuPill">AUTO</span></div>
+        <div class="summary-card"><div class="summary-icon green">✓</div><div><small>Status</small><strong id="summaryStatus">Wszystko działa</strong><p>System gotowy do pracy</p></div></div>
+      </div>
+
+      <div class="dashboard-grid">
+        <div class="card synthesis-card">
+          <div class="card-head"><div><h2><span class="head-icon blue">▥</span>Synteza mowy</h2><p>Przekształć tekst w naturalnie brzmiącą mowę przy użyciu wybranego profilu.</p></div><button class="ghost-btn" data-goto="synthesis">Ustawienia zaawansowane</button></div>
+          <textarea id="dashText">Witaj w SoundCore! To nowoczesna platforma do syntezy mowy i trenowania własnych modeli głosu. Dzięki sztucznej inteligencji możesz tworzyć naturalnie brzmiące nagrania w kilka sekund.</textarea>
+          <div class="form-row three">
+            <label>Profil głosu<select id="dashProfile"></select></label>
+            <label>Język<select id="dashLanguage"><option value="pl">🇵🇱 Polski (PL)</option><option value="en">🇬🇧 English (EN)</option><option value="de">🇩🇪 Deutsch (DE)</option></select></label>
+            <label>Styl mówienia<select><option>✦ Naturalny</option><option>Wyraźny</option><option>Spokojny</option></select></label>
+          </div>
+          <div class="action-row"><button class="gradient-btn" id="dashGenerate">✦ Generuj</button><button class="secondary-btn" id="dashPlay">▶ Odtwórz</button><span class="spacer"></span><button class="mini-select">1.0×⌄</button><button class="secondary-btn" data-goto="synthesis">⇩ Pobierz</button></div>
+          <div class="audio-player"><button id="playerPlay">▶</button><div class="waveform" id="waveform"></div><span id="playerStatus">0:00 / 0:00</span><span>⋮</span></div>
+        </div>
+
+        <div class="card training-card">
+          <div class="card-head"><div><h2><span class="head-icon purple">◎</span>Trening modelu XTTS</h2><p>Trenuj własny model głosu na podstawie własnych nagrań.</p></div><button class="ghost-btn" data-goto="training">Otwórz panel</button></div>
+          <div class="metric-row">
+            <div class="metric"><small>Zbiór danych</small><b id="dashDataset">0 min</b><span>Czas nagrań</span></div>
+            <div class="metric"><small>Epoki</small><b id="dashEpochs">10</b><span>Liczba epok</span></div>
+            <div class="metric"><small>Urządzenie</small><b id="dashTrainDevice">AUTO</b><span>Automatyczny wybór</span></div>
+          </div>
+          <div class="train-box">
+            <div class="train-line"><b id="dashTrainTitle">Gotowy do treningu</b><span id="dashTrainEpoch">Brak aktywnego zadania</span></div>
+            <div class="progress"><i id="dashTrainProgress" style="width:0%"></i></div>
+            <div class="loss-line"><span>Status treningu</span><strong id="dashTrainPercent">0%</strong></div>
+            <div class="loss-chart"><svg viewBox="0 0 520 145" preserveAspectRatio="none"><path d="M15 24 C55 42, 75 55, 120 66 S200 92, 250 100 S350 103, 505 102" fill="none" stroke="url(#g)" stroke-width="3"/><defs><linearGradient id="g"><stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#2684ff"/></linearGradient></defs></svg></div>
+            <div class="train-footer"><span id="dashTrainMessage">Dodaj próbki treningowe, aby rozpocząć.</span><button class="danger-outline" id="dashStopTraining">■ Zatrzymaj trening</button></div>
+          </div>
+        </div>
+
+        <div class="card profiles-card">
+          <div class="card-head"><div><h2><span class="head-icon blue">◯</span>Profile głosu</h2><p>Zarządzaj swoimi profilami głosu i wybierz najlepszy do syntezy.</p></div><button class="ghost-btn" data-goto="profiles">Zobacz wszystkie →</button></div>
+          <div class="profile-cards" id="dashProfileCards"></div>
+        </div>
+
+        <div class="card updates-card">
+          <div class="card-head"><div><h2><span class="head-icon blue">⇩</span>Aktualizacje</h2><p>Sprawdź najnowsze wersje i aktualizacje systemu.</p></div></div>
+          <div class="version-row"><div><small>Aktualna wersja</small><b id="currentVersion">—</b><span>Instalacja lokalna</span></div><div><small>Najnowsza wersja</small><b id="latestVersion">—</b><span id="latestState">Sprawdź kanał GitHub</span></div></div>
+          <button class="soft-gradient-btn" id="dashCheckUpdates">↻ Sprawdź aktualizacje</button>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="page-synthesis">
+      <div class="card large-card">
+        <div class="card-head"><div><h2>Synteza mowy</h2><p>Pełny panel generowania mowy z profilu XTTS i opcjonalnym RVC.</p></div></div>
+        <div class="two-col">
+          <div><label class="field-title">Tekst do wypowiedzenia</label><textarea class="big-textarea" id="synthText">Witaj, to jest przykładowy tekst wypowiedziany moim własnym głosem.</textarea></div>
+          <div class="settings-panel"><label>Profil<select id="synthProfile"></select></label><label>Język<select id="synthLanguage"><option value="pl">Polski</option><option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="es">Español</option></select></label><label class="check"><input type="checkbox" id="synthRvc"/> Użyj RVC, jeśli profil ma podpięty model</label><button class="gradient-btn wide" id="synthGenerate">✦ Generuj i odtwórz</button><button class="secondary-btn wide" id="synthPlay">▶ Odtwórz ostatni plik</button><div class="status-box" id="synthResult">Brak wygenerowanego pliku.</div></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="page-profiles">
+      <div class="profiles-layout">
+        <div class="card">
+          <div class="card-head"><div><h2>Nowy profil głosu</h2><p>Nagraj referencję, która będzie używana przez XTTS.</p></div></div>
+          <div class="stack-form"><label>Nazwa profilu<input id="newProfileName" placeholder="np. Sławomir" /></label><label>Mikrofon<select id="profileDevice"></select></label><label>Długość nagrania<select id="profileDuration"><option>10</option><option selected>20</option><option>30</option><option>45</option></select></label><button class="gradient-btn wide" id="recordProfileBtn">● Nagraj i zapisz profil</button><div class="status-box" id="recordProfileStatus">Mów naturalnie, bez muzyki i pogłosu.</div></div>
+        </div>
+        <div class="card grow">
+          <div class="card-head"><div><h2>Twoje profile</h2><p>Odsłuchuj referencje i zarządzaj danymi treningowymi.</p></div></div>
+          <div class="profiles-table" id="profilesTable"></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="page-training">
+      <div class="training-layout">
+        <div class="card data-card">
+          <div class="card-head"><div><h2>Zbiór treningowy</h2><p>Każda próbka zawiera nagranie i dokładny tekst. To właśnie na tych danych GPTTrainer dostraja XTTS.</p></div></div>
+          <div class="metric-row training-metrics"><div class="metric"><small>Próbki</small><b id="trainSampleCount">0</b><span>zaakceptowane</span></div><div class="metric"><small>Czas</small><b id="trainDuration">0 min</b><span>łącznie</span></div><div class="metric"><small>Cel</small><b>15+ min</b><span>zalecane minimum</span></div></div>
+          <div class="stack-form"><label>Profil<select id="trainProfile"></select></label><label>Mikrofon<select id="trainDevice"></select></label><label>Tekst próbki<textarea id="trainingSentence">Wieczorem temperatura powietrza spadła o kilka stopni, a miasto powoli cichło.</textarea></label><label>Czas nagrania<select id="trainingDuration"><option>5</option><option selected>8</option><option>10</option><option>12</option></select></label><button class="gradient-btn wide" id="recordTrainingSample">● Nagraj próbkę treningową</button><button class="secondary-btn wide" id="nextSentence">Następne zdanie</button><div class="status-box" id="sampleStatus">Dodaj serię czystych próbek z różnymi zdaniami i intonacją.</div></div>
+        </div>
+        <div class="card train-control-card">
+          <div class="card-head"><div><h2>GPTTrainer / XTTS v2</h2><p>Fine-tuning części GPT modelu XTTS na Twoim głosie.</p></div></div>
+          <div class="gpu-panel"><div class="gpu-icon">▧</div><div><small>Wykryty sprzęt</small><b id="trainGpuName">Sprawdzanie...</b><span id="trainGpuNote">—</span></div><button class="ghost-btn" id="refreshGpu">Wykryj ponownie</button></div>
+          <div class="form-row three train-config"><label>Urządzenie<select id="trainCompute"><option value="auto">AUTO</option><option value="gpu">GPU / CUDA</option><option value="cpu">CPU</option></select></label><label>Epoki<select id="trainEpochs"><option>5</option><option selected>10</option><option>20</option><option>30</option></select></label><label>Batch size<select id="trainBatch"><option>1</option><option selected>2</option><option>3</option><option>4</option></select></label></div>
+          <button class="gradient-btn wide" id="startTraining">▶ Rozpocznij trening</button>
+          <div class="train-box real-train"><div class="train-line"><b id="trainStateTitle">Gotowy</b><span id="trainStatePercent">0%</span></div><div class="progress"><i id="trainProgressBar" style="width:0%"></i></div><p id="trainStateMessage">Czekam na uruchomienie zadania.</p><button class="danger-outline" id="stopTraining">■ Zatrzymaj trening</button></div>
+          <div class="info-callout"><b>CPU/GPU</b><p>GPU zostanie użyte tylko wtedy, gdy PyTorch ma aktywną obsługę CUDA. Sama obecność RTX jest wykrywana także przez nvidia-smi, więc od razu zobaczysz, czy problemem jest sterownik, czy build PyTorch.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="page" id="page-updates">
+      <div class="card large-card">
+        <div class="card-head"><div><h2>Aktualizacje z GitHuba</h2><p>SoundCore pobiera aktualizacje wyłącznie z publicznego kanału release. Lokalny katalog projektu nie jest źródłem publikacji.</p></div></div>
+        <div class="update-hero"><div><small>Aktualna wersja</small><strong id="updatesCurrent">—</strong></div><div class="update-arrow">→</div><div><small>Najnowsza wersja</small><strong id="updatesLatest">—</strong></div></div>
+        <div class="update-actions"><button class="soft-gradient-btn" id="checkUpdates">↻ Sprawdź aktualizacje</button><button class="gradient-btn" id="installUpdate" disabled>⇩ Pobierz i zainstaluj</button></div>
+        <div class="status-box" id="updateStatus">Kanał: GitHub / main / dist/channel.json</div>
+      </div>
+    </section>
+
+    <section class="page" id="page-settings">
+      <div class="card large-card">
+        <div class="card-head"><div><h2>Ustawienia</h2><p>Informacje o środowisku i diagnostyka sprzętu.</p></div></div>
+        <div class="settings-grid"><div class="setting-tile"><small>Wersja SoundCore</small><b id="settingsVersion">—</b></div><div class="setting-tile"><small>Użytkownik</small><b id="settingsUser">—</b></div><div class="setting-tile"><small>GPU</small><b id="settingsGpu">—</b><span id="settingsGpuExtra"></span></div><div class="setting-tile"><small>PyTorch CUDA</small><b id="settingsCuda">—</b></div></div>
+      </div>
+    </section>
+  </main>
+</div>
+<div class="toast-area" id="toastArea"></div>
+<script src="app.js"></script>
+</body>
+</html>

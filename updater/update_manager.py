@@ -9,86 +9,134 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
-from dataclasses import dataclass
-from packaging.version import Version
+import zipfile
+from pathlib import Path
 
-from version import __version__
-
+APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CHANNEL_URL = "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/channel.json"
-
-@dataclass
-class UpdateInfo:
-    version: str
-    package_url: str
-    sha256: str
-    release_notes_url: str = ""
-
-    @property
-    def newer(self) -> bool:
-        return Version(self.version) > Version(__version__)
+PROTECTED_TOP_LEVEL = {"voice_profiles", "output", ".venv", "venv", ".git"}
 
 
-def _get_bytes(url: str, timeout: int = 15) -> bytes:
-    req = urllib.request.Request(url, headers={"User-Agent": f"SoundCore/{__version__}"})
-    with urllib.request.urlopen(req, timeout=timeout) as response:
-        return response.read()
+def _version_tuple(v: str) -> tuple[int, ...]:
+    parts = []
+    for p in str(v).strip().lstrip("v").split("."):
+        try:
+            parts.append(int(p))
+        except ValueError:
+            num = "".join(ch for ch in p if ch.isdigit())
+            parts.append(int(num or 0))
+    return tuple(parts)
 
 
-def check_for_update(channel_url: str = DEFAULT_CHANNEL_URL) -> UpdateInfo:
-    data = json.loads(_get_bytes(channel_url).decode("utf-8"))
-    return UpdateInfo(
-        version=str(data["version"]),
-        package_url=str(data["package_url"]),
-        sha256=str(data["sha256"]).lower(),
-        release_notes_url=str(data.get("release_notes_url", "")),
-    )
+def check_for_update(current_version: str, channel_url: str = DEFAULT_CHANNEL_URL) -> dict:
+    req = urllib.request.Request(channel_url, headers={"User-Agent": "SoundCore-Updater"})
+    with urllib.request.urlopen(req, timeout=12) as r:
+        channel = json.loads(r.read().decode("utf-8"))
+    latest = str(channel.get("version", "0.0.0"))
+    return {
+        "ok": True,
+        "current_version": current_version,
+        "latest_version": latest,
+        "update_available": _version_tuple(latest) > _version_tuple(current_version),
+        "channel": channel,
+    }
 
 
-def read_release_notes(info: UpdateInfo) -> str:
-    if not info.release_notes_url:
-        return ""
-    return _get_bytes(info.release_notes_url).decode("utf-8", errors="replace")
-
-
-def download_and_stage(info: UpdateInfo, progress=None) -> str:
-    temp_root = tempfile.mkdtemp(prefix="soundcore-update-")
-    package = os.path.join(temp_root, "soundcore_update.tar.gz")
-    req = urllib.request.Request(info.package_url, headers={"User-Agent": f"SoundCore/{__version__}"})
-    with urllib.request.urlopen(req, timeout=60) as response, open(package, "wb") as f:
-        total = int(response.headers.get("Content-Length", "0") or 0)
-        done = 0
-        while True:
-            chunk = response.read(1024 * 1024)
-            if not chunk:
-                break
-            f.write(chunk)
-            done += len(chunk)
-            if progress and total:
-                progress(done / total)
-    digest = hashlib.sha256()
-    with open(package, "rb") as f:
+def _sha256(path: Path) -> str:
+    h = hashlib.sha256()
+    with path.open("rb") as f:
         for chunk in iter(lambda: f.read(1024 * 1024), b""):
-            digest.update(chunk)
-    actual = digest.hexdigest().lower()
-    if actual != info.sha256:
-        shutil.rmtree(temp_root, ignore_errors=True)
-        raise RuntimeError(f"Błąd integralności aktualizacji. SHA256: {actual} != {info.sha256}")
-    extracted = os.path.join(temp_root, "payload")
-    os.makedirs(extracted, exist_ok=True)
-    with tarfile.open(package, "r:gz") as tf:
-        root = os.path.realpath(extracted)
-        for member in tf.getmembers():
-            target = os.path.realpath(os.path.join(extracted, member.name))
-            if not (target == root or target.startswith(root + os.sep)):
-                raise RuntimeError("Niebezpieczna ścieżka w paczce aktualizacji.")
-        tf.extractall(extracted)
-    return extracted
+            h.update(chunk)
+    return h.hexdigest().lower()
 
 
-def launch_apply_update(staged_dir: str, app_root: str) -> None:
-    script = os.path.join(app_root, "updater", "apply_update.py")
-    args = [sys.executable, script, "--source", staged_dir, "--target", app_root, "--pid", str(os.getpid()), "--restart", os.path.join(app_root, "main.py")]
-    kwargs = {}
+def _safe_extract_zip(zip_path: Path, dest: Path) -> None:
+    with zipfile.ZipFile(zip_path, "r") as zf:
+        dest_abs = dest.resolve()
+        for name in zf.namelist():
+            target = (dest / name).resolve()
+            if not str(target).startswith(str(dest_abs)):
+                raise RuntimeError(f"Niebezpieczna ścieżka w paczce: {name}")
+        zf.extractall(dest)
+
+
+def download_update(channel: dict) -> dict:
+    url = channel.get("package_url")
+    expected = str(channel.get("sha256", "")).lower()
+    if not url or not expected:
+        raise RuntimeError("Kanał aktualizacji nie zawiera package_url/sha256.")
+    temp_dir = Path(tempfile.mkdtemp(prefix="soundcore-update-"))
+    package = temp_dir / "soundcore_update.zip"
+    req = urllib.request.Request(url, headers={"User-Agent": "SoundCore-Updater"})
+    with urllib.request.urlopen(req, timeout=60) as r, package.open("wb") as f:
+        shutil.copyfileobj(r, f)
+    actual = _sha256(package)
+    if actual != expected:
+        raise RuntimeError(f"SHA256 nie zgadza się. Oczekiwano {expected}, otrzymano {actual}.")
+    extract_dir = temp_dir / "payload"
+    extract_dir.mkdir()
+    _safe_extract_zip(package, extract_dir)
+    return {"temp_dir": str(temp_dir), "package": str(package), "payload": str(extract_dir), "sha256": actual}
+
+
+def create_apply_helper(payload_dir: str, app_root: str | None = None) -> str:
+    app = Path(app_root or APP_ROOT)
+    temp_dir = Path(payload_dir).parent
+    helper = temp_dir / "apply_update.py"
+    helper.write_text(
+        '''from __future__ import annotations
+import os, shutil, subprocess, sys, time
+from pathlib import Path
+
+payload = Path(sys.argv[1]).resolve()
+app = Path(sys.argv[2]).resolve()
+pid = int(sys.argv[3])
+protected = {"voice_profiles", "output", ".venv", "venv", ".git"}
+
+for _ in range(120):
+    try:
+        if os.name == "nt":
+            import ctypes
+            PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+            handle = ctypes.windll.kernel32.OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, False, pid)
+            if handle:
+                ctypes.windll.kernel32.CloseHandle(handle)
+                time.sleep(0.25)
+                continue
+        else:
+            os.kill(pid, 0)
+            time.sleep(0.25)
+            continue
+    except Exception:
+        break
+
+for child in payload.iterdir():
+    if child.name in protected:
+        continue
+    dest = app / child.name
+    if child.is_dir():
+        if dest.exists():
+            shutil.rmtree(dest)
+        shutil.copytree(child, dest)
+    else:
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(child, dest)
+
+requirements = app / "requirements.txt"
+if requirements.exists():
+    subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(requirements)], cwd=str(app), check=False)
+
+subprocess.Popen([sys.executable, str(app / "main.py")], cwd=str(app), creationflags=(0x00000008 if os.name == "nt" else 0))
+''',
+        encoding="utf-8",
+    )
+    return str(helper)
+
+
+def launch_apply(payload_dir: str, app_root: str | None = None) -> None:
+    app = str(Path(app_root or APP_ROOT).resolve())
+    helper = create_apply_helper(payload_dir, app)
+    flags = 0
     if os.name == "nt":
-        kwargs["creationflags"] = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0) | getattr(subprocess, "DETACHED_PROCESS", 0)
-    subprocess.Popen(args, cwd=app_root, **kwargs)
+        flags = subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+    subprocess.Popen([sys.executable, helper, payload_dir, app, str(os.getpid())], creationflags=flags, close_fds=(os.name != "nt"))
