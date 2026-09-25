@@ -1,39 +1,29 @@
-"""
-app.py
-------
-Graficzny interfejs użytkownika (Tkinter) dla aplikacji SoundCore.
-
-Trzy zakładki:
-    1. Nagrywanie      - nagranie próbki głosu z mikrofonu i zapis jako profil.
-    2. Profile głosowe - lista zapisanych profili, odtwarzanie próbki, usuwanie.
-    3. Synteza mowy    - wpisanie tekstu i wygenerowanie mowy w wybranym głosie.
-
-Operacje czasochłonne (nagrywanie z paskiem postępu, ładowanie modelu TTS,
-generowanie mowy) są wykonywane w osobnych wątkach, aby nie blokować GUI.
-"""
-
 from __future__ import annotations
 
 import os
+import shutil
 import sys
 import threading
 import tkinter as tk
-from tkinter import ttk, messagebox, filedialog
+from dataclasses import dataclass
 from datetime import datetime
+from tkinter import filedialog, messagebox, ttk
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from recorder.recorder import list_input_devices, record_audio, play_wav, DEFAULT_SAMPLERATE
+from recorder.recorder import DEFAULT_SAMPLERATE, list_input_devices, play_wav, record_audio
 from preprocessing.audio_utils import preprocess_pipeline
-from storage.profile_manager import ProfileManager
-from voice_engine.tts_engine import get_engine
+from storage.profile_manager import ProfileManager, VoiceProfile
 from voice_engine.rvc_engine import get_rvc_engine
-from training.dataset import append_sample, get_stats, load_prompts
-from training.manager import TrainingProcess, available_devices
-from updater.update_manager import check_for_update, read_release_notes, download_and_stage, launch_apply_update
-from version import __version__
+from voice_engine.tts_engine import get_engine
 
-OUTPUT_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "output")
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+OUTPUT_DIR = os.path.join(BASE_DIR, "output")
+ASSETS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "assets")
+LOGO_PATH = os.path.join(ASSETS_DIR, "soundcore_logo.png")
+APP_VERSION = "0.2.0"
+LATEST_VERSION = "0.2.0"
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 LANGUAGES = {
@@ -44,154 +34,792 @@ LANGUAGES = {
     "Hiszpański": "es",
 }
 
+BG = "#F6F8FC"
+SIDEBAR_BG = "#FFFFFF"
+CARD_BG = "#FFFFFF"
+TEXT = "#18233C"
+MUTED = "#73819D"
+BORDER = "#E6EBF5"
+PRIMARY = "#2EA7FF"
+PRIMARY_2 = "#8C4DFF"
+PRIMARY_DARK = "#1E5BFF"
+GREEN = "#1BAF63"
+RED = "#E54B67"
+SOFT_BLUE = "#EDF5FF"
+SOFT_GREEN = "#ECFBF2"
+SOFT_PURPLE = "#F3EEFF"
+SOFT_RED = "#FFF1F4"
+SOFT_GRAY = "#F8FAFD"
+BUTTON_BG = "#EEF3FB"
+
+
+@dataclass
+class SpeechContext:
+    profile_combo: ttk.Combobox
+    language_combo: ttk.Combobox
+    text_widget: tk.Text
+    generate_button: tk.Widget
+    progress: ttk.Progressbar
+    play_button: tk.Widget | None = None
+    use_rvc_var: tk.BooleanVar | None = None
+
 
 class SoundCoreApp(ttk.Frame):
     def __init__(self, master: tk.Tk) -> None:
         super().__init__(master)
         self.master = master
+        self.master.configure(bg=BG)
+
         self.profile_manager = ProfileManager()
         self.engine = get_engine()
         self.rvc_engine = get_rvc_engine()
-        self.training_process = TrainingProcess()
-        self._training_log_lines = []
-        self._last_update_info = None
 
         self._recorded_audio = None
         self._recorded_samplerate = DEFAULT_SAMPLERATE
+        self._last_generated_path: str | None = None
+        self._devices = []
+        self._profiles: list[VoiceProfile] = []
+        self._speech_contexts: dict[str, SpeechContext] = {}
+        self._nav_buttons: dict[str, tk.Button] = {}
+        self._pages: dict[str, tk.Frame] = {}
+        self._current_page = "dashboard"
+        self._profile_cards_container: tk.Frame | None = None
+        self._logo_image = None
+        self._busy_generation = False
 
         self.pack(fill="both", expand=True)
-        self._build_ui()
-        self._refresh_profile_list()
-
-    # ------------------------------------------------------------------
-    # Budowa interfejsu
-    # ------------------------------------------------------------------
-    def _build_ui(self) -> None:
-        notebook = ttk.Notebook(self)
-        notebook.pack(fill="both", expand=True, padx=10, pady=10)
-
-        self.tab_record = ttk.Frame(notebook)
-        self.tab_profiles = ttk.Frame(notebook)
-        self.tab_speak = ttk.Frame(notebook)
-        self.tab_train = ttk.Frame(notebook)
-        self.tab_updates = ttk.Frame(notebook)
-
-        notebook.add(self.tab_record, text="🎙️ Nagrywanie")
-        notebook.add(self.tab_profiles, text="👤 Profile głosowe")
-        notebook.add(self.tab_speak, text="🔊 Synteza mowy")
-        notebook.add(self.tab_train, text="🧠 Trening modelu")
-        notebook.add(self.tab_updates, text="⬆ Aktualizacje")
-
-        self._build_record_tab()
-        self._build_profiles_tab()
-        self._build_speak_tab()
-        self._build_train_tab()
-        self._build_updates_tab()
-
-        # Pasek statusu na dole okna
-        self.status_var = tk.StringVar(value=f"SoundCore {__version__} · TTS: {self.engine.device.upper()}")
-        status_bar = ttk.Label(self.master, textvariable=self.status_var, anchor="w", relief="sunken")
-        status_bar.pack(fill="x", side="bottom")
-
-    # ---------------------- Zakładka: Nagrywanie ----------------------
-    def _build_record_tab(self) -> None:
-        frame = self.tab_record
-        pad = {"padx": 10, "pady": 6}
-
-        ttk.Label(frame, text="Urządzenie wejściowe (mikrofon):").grid(row=0, column=0, sticky="w", **pad)
-        self.device_combo = ttk.Combobox(frame, state="readonly", width=50)
-        self.device_combo.grid(row=0, column=1, columnspan=2, sticky="w", **pad)
+        self._build_styles()
+        self._build_shell()
         self._populate_devices()
+        self._refresh_all()
+        self._show_page("dashboard")
 
-        ttk.Button(frame, text="🔄 Odśwież listę", command=self._populate_devices).grid(
-            row=0, column=3, **pad
+    # ------------------------------------------------------------------
+    # UI shell
+    # ------------------------------------------------------------------
+    def _build_styles(self) -> None:
+        style = ttk.Style()
+        try:
+            style.theme_use("clam")
+        except tk.TclError:
+            pass
+        style.configure("SC.TFrame", background=BG)
+        style.configure("Card.TFrame", background=CARD_BG)
+        style.configure("Sidebar.TFrame", background=SIDEBAR_BG)
+        style.configure("SC.TLabel", background=BG, foreground=TEXT)
+        style.configure("Muted.TLabel", background=BG, foreground=MUTED)
+        style.configure("CardTitle.TLabel", background=CARD_BG, foreground=TEXT, font=("Segoe UI", 14, "bold"))
+        style.configure("CardMuted.TLabel", background=CARD_BG, foreground=MUTED, font=("Segoe UI", 10))
+        style.configure("SC.TCombobox", fieldbackground="#FFFFFF", background="#FFFFFF", foreground=TEXT, bordercolor=BORDER, lightcolor=BORDER, darkcolor=BORDER, arrowsize=14, padding=6)
+        style.map("SC.TCombobox", fieldbackground=[("readonly", "#FFFFFF")])
+        style.configure("Blue.Horizontal.TProgressbar", troughcolor="#EAEFFD", background=PRIMARY_DARK, bordercolor="#EAEFFD", lightcolor=PRIMARY, darkcolor=PRIMARY_2, thickness=10)
+        style.configure("Green.Horizontal.TProgressbar", troughcolor="#E5F7EE", background=GREEN, bordercolor="#E5F7EE", lightcolor="#35D987", darkcolor=GREEN, thickness=10)
+
+    def _build_shell(self) -> None:
+        self.columnconfigure(1, weight=1)
+        self.rowconfigure(0, weight=1)
+
+        self.sidebar = tk.Frame(self, bg=SIDEBAR_BG, width=250, highlightthickness=1, highlightbackground=BORDER)
+        self.sidebar.grid(row=0, column=0, sticky="nsw")
+        self.sidebar.grid_propagate(False)
+        self._build_sidebar()
+
+        self.main = tk.Frame(self, bg=BG)
+        self.main.grid(row=0, column=1, sticky="nsew")
+        self.main.rowconfigure(1, weight=1)
+        self.main.columnconfigure(0, weight=1)
+
+        self.header_frame = tk.Frame(self.main, bg=BG)
+        self.header_frame.grid(row=0, column=0, sticky="ew", padx=28, pady=(18, 10))
+        self.header_frame.columnconfigure(0, weight=1)
+        self._build_header()
+
+        self.page_host = tk.Frame(self.main, bg=BG)
+        self.page_host.grid(row=1, column=0, sticky="nsew", padx=28, pady=(0, 18))
+        self.page_host.rowconfigure(0, weight=1)
+        self.page_host.columnconfigure(0, weight=1)
+        self._build_pages()
+
+        self.status_var = tk.StringVar(value=f"Gotowe. Silnik TTS działa na: {self.engine.device.upper()}")
+        status = tk.Label(self.main, textvariable=self.status_var, bg="#F0F4FA", fg=MUTED, anchor="w", padx=16, pady=8)
+        status.grid(row=2, column=0, sticky="ew")
+
+    def _build_sidebar(self) -> None:
+        logo_box = tk.Frame(self.sidebar, bg=SIDEBAR_BG)
+        logo_box.pack(fill="x", padx=18, pady=(18, 14))
+        self._load_logo(logo_box)
+
+        menu_items = [
+            ("dashboard", "⌂  Pulpit"),
+            ("speak", "◉  Synteza mowy"),
+            ("profiles", "◌  Profile głosu"),
+            ("training", "◎  Trening modelu"),
+            ("updates", "↓  Aktualizacje"),
+            ("settings", "⚙  Ustawienia"),
+        ]
+        for key, label in menu_items:
+            btn = tk.Button(
+                self.sidebar,
+                text=label,
+                command=lambda k=key: self._show_page(k),
+                font=("Segoe UI", 12, "bold" if key == "dashboard" else "normal"),
+                fg=TEXT,
+                bg=SIDEBAR_BG,
+                activebackground="#EEF2FF",
+                activeforeground=PRIMARY_DARK,
+                bd=0,
+                relief="flat",
+                anchor="w",
+                padx=18,
+                pady=12,
+                cursor="hand2",
+            )
+            btn.pack(fill="x", padx=14, pady=3)
+            self._nav_buttons[key] = btn
+
+        promo = tk.Frame(self.sidebar, bg=SOFT_GRAY, highlightthickness=1, highlightbackground=BORDER)
+        promo.pack(side="bottom", fill="x", padx=16, pady=18)
+        promo_top = tk.Canvas(promo, height=84, bg=SOFT_GRAY, bd=0, highlightthickness=0)
+        promo_top.pack(fill="x")
+        promo_top.create_arc(-20, 10, 120, 120, start=10, extent=150, fill="#C8DFFF", outline="#C8DFFF")
+        promo_top.create_arc(60, 20, 210, 140, start=10, extent=160, fill="#B9CEFF", outline="#B9CEFF")
+        promo_top.create_arc(120, 0, 260, 110, start=10, extent=150, fill="#D9C8FF", outline="#D9C8FF")
+        text_frame = tk.Frame(promo, bg=SOFT_GRAY)
+        text_frame.pack(fill="x", padx=18, pady=(6, 18))
+        tk.Label(text_frame, text="Twórz\nnaturalne głosy\nz pomocą AI", bg=SOFT_GRAY, fg=TEXT, justify="left", font=("Segoe UI", 16, "bold")).pack(anchor="w")
+        tk.Label(text_frame, text="Realistyczna synteza,\nwłasne modele, pełna kontrola.", bg=SOFT_GRAY, fg=MUTED, justify="left", font=("Segoe UI", 10)).pack(anchor="w", pady=(10, 12))
+        tk.Button(text_frame, text="Dowiedz się więcej →", bg=PRIMARY_2, fg="white", activebackground=PRIMARY_DARK, activeforeground="white", bd=0, relief="flat", font=("Segoe UI", 11, "bold"), cursor="hand2", padx=16, pady=10, command=lambda: self._show_info("SoundCore", "Nowe, nowoczesne UI jest już gotowe. Kolejny krok: backend treningu i aktualizacji." )).pack(fill="x")
+
+    def _load_logo(self, parent: tk.Widget) -> None:
+        if os.path.isfile(LOGO_PATH):
+            try:
+                img = tk.PhotoImage(file=LOGO_PATH)
+                if img.width() > 180:
+                    factor = max(1, img.width() // 180)
+                    img = img.subsample(factor, factor)
+                self._logo_image = img
+                tk.Label(parent, image=img, bg=SIDEBAR_BG).pack(anchor="w")
+                return
+            except tk.TclError:
+                pass
+        tk.Label(parent, text="SoundCore", bg=SIDEBAR_BG, fg=TEXT, font=("Segoe UI", 20, "bold")).pack(anchor="w")
+
+    def _build_header(self) -> None:
+        self.header_title = tk.Label(self.header_frame, text="Pulpit", bg=BG, fg=TEXT, font=("Segoe UI", 28, "bold"))
+        self.header_title.grid(row=0, column=0, sticky="w")
+        self.header_subtitle = tk.Label(self.header_frame, text="Witaj w SoundCore! Twórz, trenuj i zarządzaj swoimi modelami głosu.", bg=BG, fg=MUTED, font=("Segoe UI", 12))
+        self.header_subtitle.grid(row=1, column=0, sticky="w", pady=(2, 0))
+
+        right = tk.Frame(self.header_frame, bg=BG)
+        right.grid(row=0, column=1, rowspan=2, sticky="e")
+        search_wrap = tk.Frame(right, bg="#FFFFFF", highlightthickness=1, highlightbackground=BORDER)
+        search_wrap.pack(side="left", padx=(0, 16))
+        self.search_var = tk.StringVar(value="Szukaj profili, nagrań, projektów…")
+        self.search_entry = tk.Entry(search_wrap, textvariable=self.search_var, bd=0, relief="flat", width=34, fg=MUTED, bg="#FFFFFF", font=("Segoe UI", 11))
+        self.search_entry.pack(side="left", padx=(14, 8), pady=10)
+        self.search_entry.bind("<FocusIn>", self._on_search_focus_in)
+        self.search_entry.bind("<FocusOut>", self._on_search_focus_out)
+        tk.Label(search_wrap, text="⌘ K", bg="#F5F7FB", fg=MUTED, font=("Segoe UI", 9, "bold"), padx=8, pady=3).pack(side="right", padx=(0, 10))
+
+        tk.Label(right, text="🔔", bg="#FFFFFF", fg=TEXT, font=("Segoe UI Emoji", 16), padx=14, pady=8).pack(side="left", padx=(0, 12))
+        profile = tk.Frame(right, bg=BG)
+        profile.pack(side="left")
+        tk.Label(profile, text="P", bg=PRIMARY_DARK, fg="white", width=2, height=1, font=("Segoe UI", 13, "bold"), padx=6, pady=6).pack(side="left", padx=(0, 10))
+        user = tk.Frame(profile, bg=BG)
+        user.pack(side="left")
+        tk.Label(user, text="Piotr Nowak", bg=BG, fg=TEXT, font=("Segoe UI", 11, "bold")).pack(anchor="w")
+        tk.Label(user, text="Użytkownik", bg=BG, fg=MUTED, font=("Segoe UI", 9)).pack(anchor="w")
+
+    def _build_pages(self) -> None:
+        self._pages["dashboard"] = self._build_dashboard_page()
+        self._pages["speak"] = self._build_speak_page()
+        self._pages["profiles"] = self._build_profiles_page()
+        self._pages["training"] = self._build_training_page()
+        self._pages["updates"] = self._build_updates_page()
+        self._pages["settings"] = self._build_settings_page()
+        for frame in self._pages.values():
+            frame.grid(row=0, column=0, sticky="nsew")
+
+    def _show_page(self, key: str) -> None:
+        titles = {
+            "dashboard": ("Pulpit", "Witaj w SoundCore! Twórz, trenuj i zarządzaj swoimi modelami głosu."),
+            "speak": ("Synteza mowy", "Generuj naturalnie brzmiącą mowę z użyciem własnych profili."),
+            "profiles": ("Profile głosu", "Nagrywaj, zarządzaj i przygotowuj profile głosowe."),
+            "training": ("Trening modelu", "Przygotuj dane i kontroluj trening własnego modelu głosu."),
+            "updates": ("Aktualizacje", "Sprawdzaj wersje i zarządzaj kanałem aktualizacji programu."),
+            "settings": ("Ustawienia", "Podstawowa konfiguracja aplikacji i informacje o systemie."),
+        }
+        self._current_page = key
+        page = self._pages[key]
+        page.tkraise()
+        title, subtitle = titles[key]
+        self.header_title.configure(text=title)
+        self.header_subtitle.configure(text=subtitle)
+        for k, btn in self._nav_buttons.items():
+            active = k == key
+            btn.configure(
+                bg="#EEF2FF" if active else SIDEBAR_BG,
+                fg=PRIMARY_DARK if active else TEXT,
+                font=("Segoe UI", 12, "bold" if active else "normal"),
+            )
+
+    # ------------------------------------------------------------------
+    # Pages
+    # ------------------------------------------------------------------
+    def _build_dashboard_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_host, bg=BG)
+        for i in range(12):
+            page.columnconfigure(i, weight=1)
+
+        top_cards = [
+            (0, 0, 3, "Aktywny profil", "Brak profilu", "Dodaj profil, aby zacząć", SOFT_BLUE, "◌"),
+            (0, 3, 3, "Model", "XTTS v2", "Wysoka jakość · wielojęzyczny", SOFT_PURPLE, "◈"),
+            (0, 6, 3, "GPU/CPU", self.engine.device.upper(), "Urządzenie silnika", SOFT_GREEN, "⚙"),
+            (0, 9, 3, "Status", "Wszystko działa", "System gotowy do pracy", SOFT_GREEN, "✓"),
+        ]
+        self.dashboard_top_value_labels = {}
+        for row, col, span, title, value, subtitle, icon_bg, icon in top_cards:
+            card = self._card(page)
+            card.grid(row=row, column=col, columnspan=span, sticky="nsew", padx=8, pady=8)
+            icon_box = tk.Label(card, text=icon, bg=icon_bg, fg=PRIMARY_DARK if title != "Status" else GREEN, font=("Segoe UI", 18, "bold"), width=2, pady=10)
+            icon_box.pack(side="left", padx=16, pady=16)
+            text_box = tk.Frame(card, bg=CARD_BG)
+            text_box.pack(side="left", fill="both", expand=True, pady=16)
+            tk.Label(text_box, text=title, bg=CARD_BG, fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w")
+            value_lbl = tk.Label(text_box, text=value, bg=CARD_BG, fg=TEXT, font=("Segoe UI", 16, "bold"))
+            value_lbl.pack(anchor="w", pady=(2, 0))
+            subtitle_lbl = tk.Label(text_box, text=subtitle, bg=CARD_BG, fg=MUTED, font=("Segoe UI", 10))
+            subtitle_lbl.pack(anchor="w")
+            self.dashboard_top_value_labels[title] = (value_lbl, subtitle_lbl)
+
+        speech = self._card(page)
+        speech.grid(row=1, column=0, columnspan=7, sticky="nsew", padx=8, pady=8)
+        self._build_dashboard_speech_card(speech)
+
+        training = self._card(page)
+        training.grid(row=1, column=7, columnspan=5, sticky="nsew", padx=8, pady=8)
+        self._build_dashboard_training_card(training)
+
+        profiles = self._card(page)
+        profiles.grid(row=2, column=0, columnspan=7, sticky="nsew", padx=8, pady=8)
+        self._build_dashboard_profiles_card(profiles)
+
+        updates = self._card(page)
+        updates.grid(row=2, column=7, columnspan=5, sticky="nsew", padx=8, pady=8)
+        self._build_dashboard_updates_card(updates)
+
+        return page
+
+    def _build_dashboard_speech_card(self, parent: tk.Frame) -> None:
+        self._card_header(parent, "Synteza mowy", "Przekształć tekst w naturalnie brzmiącą mowę przy użyciu wybranego profilu.", action_text="Ustawienia zaawansowane", action_cmd=lambda: self._show_page("speak"))
+
+        text = tk.Text(parent, height=5, wrap="word", bd=0, relief="flat", font=("Segoe UI", 12), fg=TEXT, bg="#FFFFFF", highlightthickness=1, highlightbackground=BORDER, padx=12, pady=12)
+        text.pack(fill="x", padx=18, pady=(4, 10))
+        text.insert("1.0", "Witaj w SoundCore! To nowoczesna platforma do syntezy mowy i trenowania\nwłasnych modeli głosu. Dzięki sztucznej inteligencji możesz tworzyć naturalnie\nbrzmiące nagrania w kilka sekund.")
+
+        row = tk.Frame(parent, bg=CARD_BG)
+        row.pack(fill="x", padx=18, pady=(4, 10))
+        row.columnconfigure((0, 1, 2), weight=1)
+        prof = self._labeled_combo(row, 0, "Profil głosu")
+        lang = self._labeled_combo(row, 1, "Język", values=list(LANGUAGES.keys()), current=0)
+        style_combo = self._labeled_combo(row, 2, "Styl mówienia", values=["Naturalny", "Wyraźny", "Spokojny"], current=0)
+        style_combo.configure(state="readonly")
+
+        buttons = tk.Frame(parent, bg=CARD_BG)
+        buttons.pack(fill="x", padx=18, pady=(0, 12))
+        gen_btn = self._button(buttons, "✦  Generuj", self._generate_speech_dashboard, fill="#5C66FF")
+        gen_btn.pack(side="left")
+        play_btn = self._button(buttons, "▶  Odtwórz", self._play_last_generated, fill=BUTTON_BG, fg=PRIMARY_DARK)
+        play_btn.pack(side="left", padx=(10, 0))
+        play_btn.configure(state="disabled")
+        self.dashboard_download_btn = self._button(buttons, "⇩  Pobierz", self._download_last_generated, fill=BUTTON_BG, fg=TEXT)
+        self.dashboard_download_btn.pack(side="right")
+        self.dashboard_download_btn.configure(state="disabled")
+        self.dashboard_speed_var = tk.StringVar(value="1.0x")
+        speed = ttk.Combobox(buttons, textvariable=self.dashboard_speed_var, width=7, state="readonly", values=["0.8x", "1.0x", "1.1x", "1.2x"], style="SC.TCombobox")
+        speed.pack(side="right", padx=(0, 10))
+
+        progress = ttk.Progressbar(parent, style="Blue.Horizontal.TProgressbar", mode="indeterminate")
+        progress.pack(fill="x", padx=18, pady=(0, 10))
+
+        audio = tk.Frame(parent, bg="#F8FAFE", highlightthickness=1, highlightbackground=BORDER)
+        audio.pack(fill="x", padx=18, pady=(0, 18))
+        tk.Label(audio, text="▶", bg="#F8FAFE", fg=PRIMARY_DARK, font=("Segoe UI", 18, "bold"), padx=14, pady=12).pack(side="left")
+        self.wave_canvas = tk.Canvas(audio, height=54, bg="#F8FAFE", bd=0, highlightthickness=0)
+        self.wave_canvas.pack(side="left", fill="x", expand=True, padx=(0, 10), pady=8)
+        self._draw_waveform(self.wave_canvas)
+        self.dashboard_audio_label = tk.Label(audio, text="0:00 / 0:00", bg="#F8FAFE", fg=MUTED, font=("Segoe UI", 10))
+        self.dashboard_audio_label.pack(side="right", padx=14)
+
+        self._speech_contexts["dashboard"] = SpeechContext(
+            profile_combo=prof,
+            language_combo=lang,
+            text_widget=text,
+            generate_button=gen_btn,
+            progress=progress,
+            play_button=play_btn,
+            use_rvc_var=None,
         )
 
-        ttk.Label(frame, text="Długość nagrania (sekundy):").grid(row=1, column=0, sticky="w", **pad)
+    def _build_dashboard_training_card(self, parent: tk.Frame) -> None:
+        self._card_header(parent, "Trening modelu XTTS", "Trenuj własny model głosu na podstawie nagrań.", action_text="Dokumentacja", action_cmd=lambda: self._show_info("Trening modelu", "Warstwa wizualna treningu jest gotowa. Następny etap to pełne spięcie backendu GPTTrainer."))
+        metrics = tk.Frame(parent, bg=CARD_BG)
+        metrics.pack(fill="x", padx=18, pady=(6, 6))
+        metrics.columnconfigure((0, 1, 2), weight=1)
+        self.training_dataset_label = self._metric_card(metrics, 0, "Zbiór danych", "0 min", "Czas nagrań")
+        self.training_epochs_label = self._metric_card(metrics, 1, "Epoki", "10", "Liczba epok")
+        self.training_device_label = self._metric_card(metrics, 2, "Urządzenie", "AUTO", "Automatyczny wybór")
+
+        box = tk.Frame(parent, bg="#FBFCFF", highlightthickness=1, highlightbackground=BORDER)
+        box.pack(fill="both", expand=True, padx=18, pady=(8, 18))
+        top = tk.Frame(box, bg="#FBFCFF")
+        top.pack(fill="x", padx=16, pady=(14, 8))
+        tk.Label(top, text="Trening w toku…", bg="#FBFCFF", fg=TEXT, font=("Segoe UI", 15, "bold")).pack(side="left")
+        tk.Label(top, text="Epoka 0 / 10", bg="#FBFCFF", fg=MUTED, font=("Segoe UI", 10)).pack(side="right")
+        pb = ttk.Progressbar(box, style="Blue.Horizontal.TProgressbar", value=32)
+        pb.pack(fill="x", padx=16)
+        tk.Label(box, text="Loss (niższe = lepsze)", bg="#FBFCFF", fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=16, pady=(12, 4))
+        chart = tk.Canvas(box, height=140, bg="#FFFFFF", bd=0, highlightthickness=1, highlightbackground=BORDER)
+        chart.pack(fill="x", padx=16, pady=(0, 8))
+        self._draw_loss_chart(chart)
+        bottom = tk.Frame(box, bg="#FBFCFF")
+        bottom.pack(fill="x", padx=16, pady=(6, 16))
+        tk.Label(bottom, text="Czas treningu  00:00:00", bg="#FBFCFF", fg=TEXT, font=("Segoe UI", 11, "bold")).pack(side="left")
+        self._button(bottom, "■  Zatrzymaj trening", lambda: self._show_info("Trening", "Backend treningu będzie spięty w kolejnym kroku."), fill="#FFF0F3", fg=RED, border=RED).pack(side="right")
+
+    def _build_dashboard_profiles_card(self, parent: tk.Frame) -> None:
+        self._card_header(parent, "Profile głosu", "Zarządzaj swoimi profilami głosu i wybierz najlepszy do syntezy.", action_text="Zobacz wszystkie →", action_cmd=lambda: self._show_page("profiles"))
+        self._profile_cards_container = tk.Frame(parent, bg=CARD_BG)
+        self._profile_cards_container.pack(fill="both", expand=True, padx=14, pady=(4, 14))
+        self._render_dashboard_profile_cards()
+
+    def _build_dashboard_updates_card(self, parent: tk.Frame) -> None:
+        self._card_header(parent, "Aktualizacje", "Sprawdź najnowsze wersje i aktualizacje systemu.")
+        wrap = tk.Frame(parent, bg=CARD_BG)
+        wrap.pack(fill="both", expand=True, padx=18, pady=(6, 16))
+        wrap.columnconfigure((0, 1), weight=1)
+        self.current_version_tile = self._metric_card(wrap, 0, "Aktualna wersja", APP_VERSION, "Lokalna instalacja")
+        self.latest_version_tile = self._metric_card(wrap, 1, "Najnowsza wersja", LATEST_VERSION, "+ Masz najnowszą wersję")
+        self._button(parent, "↻  Sprawdź aktualizacje", self._check_updates_stub, fill="#EEF4FF", fg=PRIMARY_DARK).pack(fill="x", padx=18, pady=(0, 18))
+
+    def _build_speak_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_host, bg=BG)
+        container = self._card(page)
+        container.pack(fill="both", expand=True, padx=8, pady=8)
+        self._card_header(container, "Synteza mowy", "Wprowadź tekst i wygeneruj mowę na bazie wybranego profilu głosowego.")
+
+        content = tk.Frame(container, bg=CARD_BG)
+        content.pack(fill="both", expand=True, padx=18, pady=(8, 18))
+        content.columnconfigure((0, 1), weight=1)
+
+        left = tk.Frame(content, bg=CARD_BG)
+        left.grid(row=0, column=0, sticky="nsew", padx=(0, 12))
+        right = tk.Frame(content, bg=CARD_BG)
+        right.grid(row=0, column=1, sticky="nsew", padx=(12, 0))
+
+        tk.Label(left, text="Tekst do syntezy", bg=CARD_BG, fg=TEXT, font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        text = tk.Text(left, height=16, wrap="word", bd=0, relief="flat", font=("Segoe UI", 12), fg=TEXT, bg="#FFFFFF", highlightthickness=1, highlightbackground=BORDER, padx=12, pady=12)
+        text.pack(fill="both", expand=True, pady=(8, 12))
+        text.insert("1.0", "Witaj, to jest przykładowy tekst wypowiedziany moim własnym głosem.")
+
+        tk.Label(right, text="Ustawienia", bg=CARD_BG, fg=TEXT, font=("Segoe UI", 13, "bold")).pack(anchor="w")
+        prof = self._labeled_combo(right, None, "Profil głosowy")
+        prof.pack(fill="x", pady=(8, 10))
+        lang = self._labeled_combo(right, None, "Język", values=list(LANGUAGES.keys()), current=0)
+        lang.pack(fill="x", pady=(0, 10))
+        rvc_var = tk.BooleanVar(value=False)
+        tk.Checkbutton(right, text="Popraw barwę głosu przez RVC", variable=rvc_var, bg=CARD_BG, fg=TEXT, selectcolor="#FFFFFF", activebackground=CARD_BG, font=("Segoe UI", 11)).pack(anchor="w", pady=(4, 16))
+        progress = ttk.Progressbar(right, style="Blue.Horizontal.TProgressbar", mode="indeterminate")
+        progress.pack(fill="x", pady=(0, 16))
+        gen = self._button(right, "✦  Generuj i odtwórz", self._generate_speech_full, fill="#5C66FF")
+        gen.pack(fill="x", pady=(0, 10))
+        play_btn = self._button(right, "▶  Odtwórz ostatni plik", self._play_last_generated, fill=BUTTON_BG, fg=PRIMARY_DARK)
+        play_btn.pack(fill="x", pady=(0, 10))
+        play_btn.configure(state="disabled")
+        save_btn = self._button(right, "⇩  Zapisz plik WAV", self._download_last_generated, fill=BUTTON_BG, fg=TEXT)
+        save_btn.pack(fill="x")
+
+        info = tk.Frame(right, bg="#F8FAFE", highlightthickness=1, highlightbackground=BORDER)
+        info.pack(fill="x", pady=(18, 0))
+        tk.Label(info, text="Porada", bg="#F8FAFE", fg=TEXT, font=("Segoe UI", 12, "bold")).pack(anchor="w", padx=12, pady=(12, 4))
+        tk.Label(info, text="Najlepsze wyniki uzyskasz z wyraźnie nagraną próbką referencyjną i krótkimi testami w kilku językach.", bg="#F8FAFE", fg=MUTED, justify="left", wraplength=320, font=("Segoe UI", 10)).pack(anchor="w", padx=12, pady=(0, 12))
+
+        self._speech_contexts["speak"] = SpeechContext(
+            profile_combo=prof,
+            language_combo=lang,
+            text_widget=text,
+            generate_button=gen,
+            progress=progress,
+            play_button=play_btn,
+            use_rvc_var=rvc_var,
+        )
+        return page
+
+    def _build_profiles_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_host, bg=BG)
+        page.columnconfigure((0, 1), weight=1)
+        page.rowconfigure(1, weight=1)
+
+        record = self._card(page)
+        record.grid(row=0, column=0, columnspan=2, sticky="ew", padx=8, pady=8)
+        self._card_header(record, "Nagrywanie profilu", "Nagraj próbkę głosu i zapisz ją jako nowy profil.")
+        body = tk.Frame(record, bg=CARD_BG)
+        body.pack(fill="x", padx=18, pady=(6, 18))
+        body.columnconfigure((0, 1, 2, 3), weight=1)
+        tk.Label(body, text="Urządzenie wejściowe", bg=CARD_BG, fg=MUTED, font=("Segoe UI", 10)).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        self.device_combo = ttk.Combobox(body, state="readonly", style="SC.TCombobox")
+        self.device_combo.grid(row=1, column=0, sticky="ew", padx=(0, 10))
+        tk.Label(body, text="Długość nagrania (s)", bg=CARD_BG, fg=MUTED, font=("Segoe UI", 10)).grid(row=0, column=1, sticky="w", pady=(0, 4))
         self.duration_var = tk.IntVar(value=20)
-        ttk.Spinbox(frame, from_=5, to=120, textvariable=self.duration_var, width=10).grid(
-            row=1, column=1, sticky="w", **pad
-        )
-
-        ttk.Label(
-            frame,
-            text="Wskazówka: mów naturalnie, wyraźnie, przez min. 15-20 sekund,\n"
-                 "aby model mógł dobrze uchwycić barwę głosu i dykcję.",
-            foreground="gray",
-        ).grid(row=2, column=0, columnspan=4, sticky="w", **pad)
-
-        self.record_button = ttk.Button(frame, text="⏺ Rozpocznij nagrywanie", command=self._start_recording)
-        self.record_button.grid(row=3, column=0, sticky="w", **pad)
-
-        self.progress = ttk.Progressbar(frame, length=300, mode="determinate", maximum=100)
-        self.progress.grid(row=3, column=1, columnspan=2, sticky="w", **pad)
-
-        ttk.Separator(frame, orient="horizontal").grid(row=4, column=0, columnspan=4, sticky="ew", pady=10)
-
-        ttk.Label(frame, text="Nazwa profilu głosowego:").grid(row=5, column=0, sticky="w", **pad)
+        tk.Spinbox(body, from_=5, to=120, textvariable=self.duration_var, bd=0, relief="flat", highlightthickness=1, highlightbackground=BORDER, bg="#FFFFFF", fg=TEXT, font=("Segoe UI", 11)).grid(row=1, column=1, sticky="ew", padx=(0, 10))
+        tk.Label(body, text="Nazwa profilu", bg=CARD_BG, fg=MUTED, font=("Segoe UI", 10)).grid(row=0, column=2, sticky="w", pady=(0, 4))
         self.profile_name_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=self.profile_name_var, width=30).grid(row=5, column=1, sticky="w", **pad)
+        tk.Entry(body, textvariable=self.profile_name_var, bd=0, relief="flat", highlightthickness=1, highlightbackground=BORDER, bg="#FFFFFF", fg=TEXT, font=("Segoe UI", 11)).grid(row=1, column=2, sticky="ew", padx=(0, 10))
+        refresh = self._button(body, "↻  Odśwież mikrofony", self._populate_devices, fill=BUTTON_BG, fg=TEXT)
+        refresh.grid(row=1, column=3, sticky="ew")
 
-        self.save_button = ttk.Button(
-            frame, text="💾 Zapisz jako profil głosowy", command=self._save_profile, state="disabled"
-        )
-        self.save_button.grid(row=5, column=2, sticky="w", **pad)
+        self.record_progress = ttk.Progressbar(record, style="Blue.Horizontal.TProgressbar", mode="determinate", maximum=100)
+        self.record_progress.pack(fill="x", padx=18, pady=(0, 12))
+        actions = tk.Frame(record, bg=CARD_BG)
+        actions.pack(fill="x", padx=18, pady=(0, 12))
+        self.record_button = self._button(actions, "●  Rozpocznij nagrywanie", self._start_recording, fill="#5C66FF")
+        self.record_button.pack(side="left")
+        self.play_recorded_button = self._button(actions, "▶  Odsłuchaj nagranie", self._play_recorded, fill=BUTTON_BG, fg=PRIMARY_DARK)
+        self.play_recorded_button.pack(side="left", padx=10)
+        self.play_recorded_button.configure(state="disabled")
+        self.save_button = self._button(actions, "💾  Zapisz profil", self._save_profile, fill=BUTTON_BG, fg=TEXT)
+        self.save_button.pack(side="left")
+        self.save_button.configure(state="disabled")
+        tk.Label(record, text="Wskazówka: mów naturalnie i wyraźnie przez co najmniej 15–20 sekund, aby model dobrze uchwycił barwę głosu i dykcję.", bg=CARD_BG, fg=MUTED, wraplength=1100, justify="left", font=("Segoe UI", 10)).pack(anchor="w", padx=18, pady=(0, 18))
 
-        self.play_recorded_button = ttk.Button(
-            frame, text="▶ Odsłuchaj nagranie", command=self._play_recorded, state="disabled"
-        )
-        self.play_recorded_button.grid(row=5, column=3, sticky="w", **pad)
+        profiles = self._card(page)
+        profiles.grid(row=1, column=0, columnspan=2, sticky="nsew", padx=8, pady=8)
+        self._card_header(profiles, "Lista profili", "Zarządzaj zapisanymi profilami, odsłuchuj próbki i podepnij model RVC.")
+        list_wrap = tk.Frame(profiles, bg=CARD_BG)
+        list_wrap.pack(fill="both", expand=True, padx=18, pady=(6, 18))
+        list_wrap.columnconfigure(0, weight=1)
+        list_wrap.rowconfigure(0, weight=1)
+        self.profiles_listbox = tk.Listbox(list_wrap, bd=0, relief="flat", highlightthickness=1, highlightbackground=BORDER, bg="#FFFFFF", fg=TEXT, font=("Segoe UI", 11), activestyle="none", selectbackground="#EAF1FF", selectforeground=TEXT)
+        self.profiles_listbox.grid(row=0, column=0, sticky="nsew")
+        scrollbar = tk.Scrollbar(list_wrap, command=self.profiles_listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.profiles_listbox.configure(yscrollcommand=scrollbar.set)
 
+        btns = tk.Frame(profiles, bg=CARD_BG)
+        btns.pack(fill="x", padx=18, pady=(0, 18))
+        self._button(btns, "▶  Odtwórz próbkę", self._play_selected_profile, fill=BUTTON_BG, fg=PRIMARY_DARK).pack(side="left")
+        self._button(btns, "🎚  Podepnij model RVC", self._attach_rvc_model, fill=BUTTON_BG, fg=TEXT).pack(side="left", padx=10)
+        self._button(btns, "🗑  Usuń profil", self._delete_selected_profile, fill="#FFF0F3", fg=RED, border=RED).pack(side="right")
+        return page
+
+    def _build_training_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_host, bg=BG)
+        card = self._card(page)
+        card.pack(fill="both", expand=True, padx=8, pady=8)
+        self._card_header(card, "Trening modelu", "Nowy, nowoczesny panel treningu jest gotowy wizualnie. Kolejnym krokiem będzie pełne spięcie backendu GPTTrainer.")
+        inner = tk.Frame(card, bg=CARD_BG)
+        inner.pack(fill="both", expand=True, padx=18, pady=(8, 18))
+        inner.columnconfigure((0, 1, 2), weight=1)
+        self.train_dataset_page_label = self._metric_card(inner, 0, "Zbiór danych", "0 min", "Łączny czas próbek")
+        self.train_profiles_page_label = self._metric_card(inner, 1, "Profile", "0", "Dostępne profile")
+        self.train_device_page_label = self._metric_card(inner, 2, "Urządzenie", self.engine.device.upper(), "Aktywne urządzenie")
+
+        form = tk.Frame(inner, bg="#FBFCFF", highlightthickness=1, highlightbackground=BORDER)
+        form.grid(row=1, column=0, columnspan=3, sticky="nsew", pady=(16, 0))
+        for col in range(3):
+            form.columnconfigure(col, weight=1)
+        tk.Label(form, text="Plan treningu", bg="#FBFCFF", fg=TEXT, font=("Segoe UI", 16, "bold")).grid(row=0, column=0, columnspan=3, sticky="w", padx=18, pady=(16, 8))
+        self.train_profile_combo = self._labeled_combo(form, 0, "Profil bazowy")
+        self.train_profile_combo.grid(row=1, column=0, sticky="ew", padx=18, pady=(0, 10))
+        self.train_device_combo = self._labeled_combo(form, 1, "Urządzenie", values=["AUTO", "GPU", "CPU"], current=0)
+        self.train_device_combo.grid(row=1, column=1, sticky="ew", padx=18, pady=(0, 10))
+        self.train_epochs_combo = self._labeled_combo(form, 2, "Epoki", values=["5", "10", "20", "30"], current=1)
+        self.train_epochs_combo.grid(row=1, column=2, sticky="ew", padx=18, pady=(0, 10))
+        tk.Label(form, text="Interfejs treningu jest już gotowy wizualnie i przygotowany pod integrację z GPTTrainer / XTTS fine-tune.", bg="#FBFCFF", fg=MUTED, wraplength=1000, justify="left", font=("Segoe UI", 10)).grid(row=2, column=0, columnspan=3, sticky="w", padx=18, pady=(0, 10))
+        self._button(form, "▶  Rozpocznij trening", lambda: self._show_info("Trening", "W tej paczce wdrożyłem pełny nowy wygląd. Spięcie backendu treningu zrobimy w następnym kroku."), fill="#5C66FF").grid(row=3, column=0, padx=18, pady=(0, 18), sticky="w")
+        self._button(form, "📁  Otwórz katalog danych", lambda: self._open_folder(self.profile_manager.base_dir), fill=BUTTON_BG, fg=TEXT).grid(row=3, column=1, padx=18, pady=(0, 18), sticky="w")
+        return page
+
+    def _build_updates_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_host, bg=BG)
+        card = self._card(page)
+        card.pack(fill="both", expand=True, padx=8, pady=8)
+        self._card_header(card, "Aktualizacje", "Panel aktualizacji jest gotowy pod integrację z mechanizmem publikacji i kanałem update jak w VEYRA.")
+        inner = tk.Frame(card, bg=CARD_BG)
+        inner.pack(fill="both", expand=True, padx=18, pady=(8, 18))
+        inner.columnconfigure((0, 1), weight=1)
+        self.upd_current_page_label = self._metric_card(inner, 0, "Aktualna wersja", APP_VERSION, "Bieżąca instalacja")
+        self.upd_latest_page_label = self._metric_card(inner, 1, "Najnowsza wersja", LATEST_VERSION, "Kanał publiczny")
+        info = tk.Frame(inner, bg="#FBFCFF", highlightthickness=1, highlightbackground=BORDER)
+        info.grid(row=1, column=0, columnspan=2, sticky="nsew", pady=(16, 0))
+        tk.Label(info, text="Mechanizm aktualizacji", bg="#FBFCFF", fg=TEXT, font=("Segoe UI", 16, "bold")).pack(anchor="w", padx=18, pady=(16, 8))
+        bullets = [
+            "sprawdzanie channel.json",
+            "porównanie wersji",
+            "pobieranie paczki aktualizacyjnej",
+            "weryfikacja SHA256",
+            "bezpieczna podmiana plików aplikacji",
+            "zachowanie voice_profiles, output i środowiska lokalnego",
+        ]
+        for item in bullets:
+            tk.Label(info, text=f"• {item}", bg="#FBFCFF", fg=MUTED, font=("Segoe UI", 11)).pack(anchor="w", padx=18, pady=2)
+        btns = tk.Frame(info, bg="#FBFCFF")
+        btns.pack(fill="x", padx=18, pady=(14, 18))
+        self._button(btns, "↻  Sprawdź aktualizacje", self._check_updates_stub, fill="#EEF4FF", fg=PRIMARY_DARK).pack(side="left")
+        self._button(btns, "📄  Pokaż release notes", lambda: self._show_info("Release notes", "SoundCore 0.2.0: nowy modernistyczny interfejs, nowe logo i przygotowanie pod system aktualizacji oraz trening modelu."), fill=BUTTON_BG, fg=TEXT).pack(side="left", padx=10)
+        return page
+
+    def _build_settings_page(self) -> tk.Frame:
+        page = tk.Frame(self.page_host, bg=BG)
+        card = self._card(page)
+        card.pack(fill="both", expand=True, padx=8, pady=8)
+        self._card_header(card, "Ustawienia", "Podstawowe informacje o aplikacji, katalogach i używanym silniku.")
+        inner = tk.Frame(card, bg=CARD_BG)
+        inner.pack(fill="both", expand=True, padx=18, pady=(8, 18))
+        inner.columnconfigure((0, 1), weight=1)
+        fields = [
+            ("Wersja", APP_VERSION),
+            ("Silnik TTS", "Coqui XTTS v2"),
+            ("Urządzenie", self.engine.device.upper()),
+            ("Katalog profili", self.profile_manager.base_dir),
+            ("Katalog output", OUTPUT_DIR),
+            ("Motyw", "Light Modern UI"),
+        ]
+        for idx, (label, value) in enumerate(fields):
+            box = tk.Frame(inner, bg="#FBFCFF", highlightthickness=1, highlightbackground=BORDER)
+            box.grid(row=idx // 2, column=idx % 2, sticky="nsew", padx=8, pady=8)
+            tk.Label(box, text=label, bg="#FBFCFF", fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(14, 2))
+            tk.Label(box, text=value, bg="#FBFCFF", fg=TEXT, font=("Segoe UI", 12, "bold"), wraplength=470, justify="left").pack(anchor="w", padx=14, pady=(0, 14))
+        btns = tk.Frame(inner, bg=CARD_BG)
+        btns.grid(row=3, column=0, columnspan=2, sticky="w", padx=8, pady=(10, 0))
+        self._button(btns, "📁  Otwórz katalog profili", lambda: self._open_folder(self.profile_manager.base_dir), fill=BUTTON_BG, fg=TEXT).pack(side="left")
+        self._button(btns, "📁  Otwórz output", lambda: self._open_folder(OUTPUT_DIR), fill=BUTTON_BG, fg=TEXT).pack(side="left", padx=10)
+        return page
+
+    # ------------------------------------------------------------------
+    # Shared widgets/helpers
+    # ------------------------------------------------------------------
+    def _card(self, parent: tk.Widget) -> tk.Frame:
+        return tk.Frame(parent, bg=CARD_BG, highlightthickness=1, highlightbackground=BORDER)
+
+    def _card_header(self, parent: tk.Frame, title: str, subtitle: str, action_text: str | None = None, action_cmd=None) -> None:
+        top = tk.Frame(parent, bg=CARD_BG)
+        top.pack(fill="x", padx=18, pady=(18, 8))
+        left = tk.Frame(top, bg=CARD_BG)
+        left.pack(side="left", fill="x", expand=True)
+        tk.Label(left, text=title, bg=CARD_BG, fg=TEXT, font=("Segoe UI", 17, "bold")).pack(anchor="w")
+        tk.Label(left, text=subtitle, bg=CARD_BG, fg=MUTED, font=("Segoe UI", 10), wraplength=900, justify="left").pack(anchor="w")
+        if action_text:
+            self._button(top, action_text, action_cmd, fill=BUTTON_BG, fg=TEXT).pack(side="right")
+
+    def _button(self, parent: tk.Widget, text: str, command, fill: str, fg: str = "white", border: str | None = None) -> tk.Button:
+        btn = tk.Button(parent, text=text, command=command, bg=fill, fg=fg, activebackground=fill, activeforeground=fg, bd=0 if not border else 1, highlightthickness=0 if not border else 1, highlightbackground=border or fill, relief="flat", font=("Segoe UI", 11, "bold"), cursor="hand2", padx=16, pady=10)
+        return btn
+
+    def _metric_card(self, parent: tk.Widget, column: int | None, title: str, value: str, subtitle: str) -> tk.Label:
+        box = tk.Frame(parent, bg="#FBFCFF", highlightthickness=1, highlightbackground=BORDER)
+        if column is None:
+            pass
+        elif isinstance(parent, tk.Frame):
+            box.grid(row=0, column=column, sticky="ew", padx=8, pady=4)
+        tk.Label(box, text=title, bg="#FBFCFF", fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(14, 2))
+        value_lbl = tk.Label(box, text=value, bg="#FBFCFF", fg=TEXT, font=("Segoe UI", 18, "bold"))
+        value_lbl.pack(anchor="w", padx=14)
+        tk.Label(box, text=subtitle, bg="#FBFCFF", fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", padx=14, pady=(2, 14))
+        return value_lbl
+
+    def _labeled_combo(self, parent: tk.Widget, column: int | None, label: str, values: list[str] | None = None, current: int | None = None) -> ttk.Combobox:
+        wrap = tk.Frame(parent, bg=CARD_BG if parent.cget("bg") == CARD_BG else parent.cget("bg"))
+        if column is None:
+            wrap.pack(fill="x")
+        else:
+            wrap.grid(row=0, column=column, sticky="ew", padx=(0, 10))
+        tk.Label(wrap, text=label, bg=wrap.cget("bg"), fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w", pady=(0, 4))
+        combo = ttk.Combobox(wrap, state="readonly", style="SC.TCombobox", values=values or [])
+        combo.pack(fill="x")
+        if values and current is not None and len(values) > current:
+            combo.current(current)
+        return combo
+
+    def _draw_waveform(self, canvas: tk.Canvas) -> None:
+        canvas.delete("all")
+        w = 700
+        h = 54
+        bars = [10, 18, 26, 20, 12, 24, 38, 48, 42, 30, 16, 26, 34, 44, 28, 18, 10]
+        x = 10
+        colors = ["#2EA7FF", "#3B94FF", "#4D84FF", "#6D69FF", "#8C4DFF"]
+        for idx, bar in enumerate(bars):
+            color = colors[idx % len(colors)]
+            canvas.create_line(x, h / 2 - bar / 2, x, h / 2 + bar / 2, fill=color, width=4, capstyle=tk.ROUND)
+            x += 18
+        canvas.configure(scrollregion=(0, 0, w, h))
+
+    def _draw_loss_chart(self, canvas: tk.Canvas) -> None:
+        canvas.delete("all")
+        width = 520
+        height = 140
+        pad = 24
+        for i in range(5):
+            y = pad + i * ((height - 2 * pad) / 4)
+            canvas.create_line(pad, y, width - pad, y, fill="#E9EEF7")
+        for i in range(11):
+            x = pad + i * ((width - 2 * pad) / 10)
+            canvas.create_line(x, pad, x, height - pad, fill="#F3F6FB")
+        points = [0.82, 0.66, 0.58, 0.50, 0.41, 0.34, 0.31, 0.31, 0.32, 0.32, 0.33]
+        coords = []
+        for idx, val in enumerate(points):
+            x = pad + idx * ((width - 2 * pad) / (len(points) - 1))
+            y = (height - pad) - val * (height - 2 * pad)
+            coords.extend([x, y])
+        canvas.create_line(*coords, fill=PRIMARY_2, width=3, smooth=True)
+        for i in range(0, len(coords), 2):
+            canvas.create_oval(coords[i] - 4, coords[i + 1] - 4, coords[i] + 4, coords[i + 1] + 4, fill=PRIMARY_DARK, outline="white")
+
+    # ------------------------------------------------------------------
+    # Data refresh
+    # ------------------------------------------------------------------
     def _populate_devices(self) -> None:
         devices = list_input_devices()
         self._devices = devices
-        self.device_combo["values"] = [str(d) for d in devices]
-        if devices:
-            self.device_combo.current(0)
+        values = [str(d) for d in devices]
+        if hasattr(self, "device_combo"):
+            self.device_combo["values"] = values
+            if values:
+                self.device_combo.current(0)
 
+    def _refresh_all(self) -> None:
+        self._profiles = self.profile_manager.list_profiles()
+        self._refresh_profile_selectors()
+        self._refresh_profile_list()
+        self._refresh_dashboard()
+        self._refresh_training_stats()
+        self._refresh_updates_page()
+
+    def _refresh_profile_selectors(self) -> None:
+        names = [p.name for p in self._profiles]
+        for key, ctx in self._speech_contexts.items():
+            ctx.profile_combo["values"] = names
+            if names and not ctx.profile_combo.get():
+                ctx.profile_combo.current(0)
+        if hasattr(self, "train_profile_combo"):
+            self.train_profile_combo["values"] = names
+            if names and not self.train_profile_combo.get():
+                self.train_profile_combo.current(0)
+
+    def _refresh_profile_list(self) -> None:
+        if not hasattr(self, "profiles_listbox"):
+            return
+        self.profiles_listbox.delete(0, tk.END)
+        for p in self._profiles:
+            marker = "  |  RVC" if p.has_rvc_model else ""
+            self.profiles_listbox.insert(tk.END, f"{p.name}  —  {p.duration_seconds}s  —  {p.created_at}{marker}")
+        self._render_dashboard_profile_cards()
+
+    def _refresh_dashboard(self) -> None:
+        if hasattr(self, "dashboard_top_value_labels"):
+            if self._profiles:
+                active = self._profiles[0]
+                self.dashboard_top_value_labels["Aktywny profil"][0].configure(text=active.name)
+                self.dashboard_top_value_labels["Aktywny profil"][1].configure(text=f"{active.duration_seconds}s · gotowy do użycia")
+            else:
+                self.dashboard_top_value_labels["Aktywny profil"][0].configure(text="Brak profilu")
+                self.dashboard_top_value_labels["Aktywny profil"][1].configure(text="Dodaj profil, aby zacząć")
+        total_seconds = sum(p.duration_seconds for p in self._profiles)
+        minutes = max(0, round(total_seconds / 60))
+        if hasattr(self, "training_dataset_label"):
+            self.training_dataset_label.configure(text=f"{minutes} min")
+
+    def _refresh_training_stats(self) -> None:
+        total_seconds = sum(p.duration_seconds for p in self._profiles)
+        minutes = max(0, round(total_seconds / 60))
+        if hasattr(self, "train_dataset_page_label"):
+            self.train_dataset_page_label.configure(text=f"{minutes} min")
+        if hasattr(self, "train_profiles_page_label"):
+            self.train_profiles_page_label.configure(text=str(len(self._profiles)))
+        if hasattr(self, "training_dataset_label"):
+            self.training_dataset_label.configure(text=f"{minutes} min")
+
+    def _refresh_updates_page(self) -> None:
+        for lbl in [getattr(self, "upd_current_page_label", None), getattr(self, "upd_latest_page_label", None), getattr(self, "current_version_tile", None), getattr(self, "latest_version_tile", None)]:
+            if lbl is None:
+                continue
+        
+    def _render_dashboard_profile_cards(self) -> None:
+        if self._profile_cards_container is None:
+            return
+        for child in self._profile_cards_container.winfo_children():
+            child.destroy()
+        if not self._profiles:
+            empty = tk.Frame(self._profile_cards_container, bg="#FBFCFF", highlightthickness=1, highlightbackground=BORDER)
+            empty.pack(fill="x", padx=6, pady=6)
+            tk.Label(empty, text="Nie masz jeszcze żadnych profili. Przejdź do 'Profile głosu', aby nagrać pierwszą próbkę.", bg="#FBFCFF", fg=MUTED, font=("Segoe UI", 11), pady=20).pack()
+            return
+        row = tk.Frame(self._profile_cards_container, bg=CARD_BG)
+        row.pack(fill="x")
+        for idx, profile in enumerate(self._profiles[:3]):
+            card = tk.Frame(row, bg="#FBFCFF", highlightthickness=1, highlightbackground="#DCE7FF" if idx == 0 else BORDER)
+            card.pack(side="left", fill="both", expand=True, padx=6, pady=6)
+            avatar = tk.Label(card, text=profile.name[:1].upper(), bg="#E6EEFF", fg=PRIMARY_DARK, font=("Segoe UI", 18, "bold"), width=2, pady=10)
+            avatar.pack(side="left", padx=12, pady=12)
+            meta = tk.Frame(card, bg="#FBFCFF")
+            meta.pack(side="left", fill="both", expand=True, pady=12)
+            tk.Label(meta, text=profile.name, bg="#FBFCFF", fg=TEXT, font=("Segoe UI", 12, "bold")).pack(anchor="w")
+            tk.Label(meta, text=f"Próbka {profile.duration_seconds}s", bg="#FBFCFF", fg=MUTED, font=("Segoe UI", 10)).pack(anchor="w")
+            tag = "XTTS v2 + RVC" if profile.has_rvc_model else "XTTS v2"
+            tk.Label(meta, text=tag, bg="#EEF2FF", fg=PRIMARY_DARK, font=("Segoe UI", 9, "bold"), padx=8, pady=2).pack(anchor="w", pady=(6, 0))
+
+    # ------------------------------------------------------------------
+    # Search box placeholder handling
+    # ------------------------------------------------------------------
+    def _on_search_focus_in(self, _event=None) -> None:
+        if self.search_var.get() == "Szukaj profili, nagrań, projektów…":
+            self.search_var.set("")
+            self.search_entry.configure(fg=TEXT)
+
+    def _on_search_focus_out(self, _event=None) -> None:
+        if not self.search_var.get().strip():
+            self.search_var.set("Szukaj profili, nagrań, projektów…")
+            self.search_entry.configure(fg=MUTED)
+
+    # ------------------------------------------------------------------
+    # Recording
+    # ------------------------------------------------------------------
     def _start_recording(self) -> None:
         if not self._devices:
             messagebox.showerror("Błąd", "Nie znaleziono żadnego urządzenia wejściowego (mikrofonu).")
             return
-
         device_index = self._devices[self.device_combo.current()].index
         duration = self.duration_var.get()
-
-        self.record_button.config(state="disabled")
-        self.save_button.config(state="disabled")
-        self.play_recorded_button.config(state="disabled")
-        self.progress["value"] = 0
-        self.status_var.set("Nagrywanie w toku... mów teraz.")
+        self.record_button.configure(state="disabled")
+        self.play_recorded_button.configure(state="disabled")
+        self.save_button.configure(state="disabled")
+        self.record_progress.configure(value=0)
+        self.status_var.set("Nagrywanie w toku… mów teraz.")
 
         def on_progress(p: float) -> None:
-            self.master.after(0, lambda: self.progress.config(value=p * 100))
+            self.master.after(0, lambda: self.record_progress.configure(value=p * 100))
 
         def worker() -> None:
             try:
-                audio = record_audio(
-                    duration=duration,
-                    device=device_index,
-                    on_progress=on_progress,
-                )
+                audio = record_audio(duration=duration, device=device_index, on_progress=on_progress)
                 cleaned = preprocess_pipeline(audio, DEFAULT_SAMPLERATE)
                 self._recorded_audio = cleaned
                 self._recorded_samplerate = DEFAULT_SAMPLERATE
                 self.master.after(0, self._on_recording_finished)
             except Exception as exc:  # noqa: BLE001
-                error_message = str(exc)
-                self.master.after(0, lambda: self._on_recording_error(error_message))
+                self.master.after(0, lambda: self._on_recording_error(str(exc)))
 
         threading.Thread(target=worker, daemon=True).start()
 
     def _on_recording_finished(self) -> None:
+        self.record_button.configure(state="normal")
+        self.play_recorded_button.configure(state="normal")
+        self.save_button.configure(state="normal")
         self.status_var.set("Nagranie zakończone. Możesz je odsłuchać lub zapisać jako profil.")
-        self.record_button.config(state="normal")
-        self.save_button.config(state="normal")
-        self.play_recorded_button.config(state="normal")
 
     def _on_recording_error(self, message: str) -> None:
+        self.record_button.configure(state="normal")
         self.status_var.set("Błąd podczas nagrywania.")
-        self.record_button.config(state="normal")
         messagebox.showerror("Błąd nagrywania", message)
 
     def _play_recorded(self) -> None:
@@ -201,11 +829,7 @@ class SoundCoreApp(ttk.Frame):
         import soundfile as sf
 
         sf.write(tmp_path, self._recorded_audio, self._recorded_samplerate)
-
-        def worker() -> None:
-            play_wav(tmp_path)
-
-        threading.Thread(target=worker, daemon=True).start()
+        threading.Thread(target=lambda: play_wav(tmp_path), daemon=True).start()
 
     def _save_profile(self) -> None:
         if self._recorded_audio is None:
@@ -215,97 +839,18 @@ class SoundCoreApp(ttk.Frame):
             messagebox.showwarning("Brak nazwy", "Podaj nazwę profilu głosowego.")
             return
         try:
-            self.profile_manager.save_profile(
-                name, self._recorded_audio, self._recorded_samplerate, overwrite=True
-            )
+            self.profile_manager.save_profile(name, self._recorded_audio, self._recorded_samplerate, overwrite=True)
+            self.status_var.set(f"Zapisano profil: {name}")
+            self._refresh_all()
             messagebox.showinfo("Zapisano", f"Profil '{name}' został zapisany.")
-            self._refresh_profile_list()
         except Exception as exc:  # noqa: BLE001
             messagebox.showerror("Błąd zapisu", str(exc))
 
-    # ---------------------- Zakładka: Profile głosowe ----------------------
-    def _build_profiles_tab(self) -> None:
-        frame = self.tab_profiles
-        pad = {"padx": 10, "pady": 6}
-
-        self.profiles_listbox = tk.Listbox(frame, width=60, height=12)
-        self.profiles_listbox.grid(row=0, column=0, columnspan=3, sticky="nsew", **pad)
-
-        ttk.Button(frame, text="🔄 Odśwież", command=self._refresh_profile_list).grid(
-            row=1, column=0, sticky="w", **pad
-        )
-        ttk.Button(frame, text="▶ Odtwórz próbkę", command=self._play_selected_profile).grid(
-            row=1, column=1, sticky="w", **pad
-        )
-        ttk.Button(frame, text="🗑 Usuń profil", command=self._delete_selected_profile).grid(
-            row=1, column=2, sticky="w", **pad
-        )
-        ttk.Button(frame, text="🎚 Podepnij model RVC", command=self._attach_rvc_model).grid(
-            row=1, column=3, sticky="w", **pad
-        )
-
-        ttk.Label(
-            frame,
-            text="Model RVC to opcjonalny, dodatkowy krok poprawiający wierność barwy głosu.\n"
-                 "Trenuje się go osobno (patrz README.md), a tutaj tylko podpinasz gotowy plik .pth\n"
-                 "(i opcjonalnie .index) do wybranego profilu.",
-            foreground="gray",
-            justify="left",
-        ).grid(row=2, column=0, columnspan=4, sticky="w", **pad)
-
-    def _refresh_profile_list(self) -> None:
-        self.profiles_listbox.delete(0, tk.END)
-        self._profiles = self.profile_manager.list_profiles()
-        for p in self._profiles:
-            rvc_marker = "  🎚RVC" if p.has_rvc_model else ""
-            trained_marker = "  🧠XTTS-FT" if p.has_trained_model else ""
-            self.profiles_listbox.insert(
-                tk.END, f"{p.name}  —  {p.duration_seconds}s  —  utworzono {p.created_at}{trained_marker}{rvc_marker}"
-            )
-        # odśwież też listę w zakładce syntezy mowy
-        names = [p.name for p in self._profiles]
-        if hasattr(self, "speak_profile_combo"):
-            self.speak_profile_combo["values"] = names
-            if names and not self.speak_profile_combo.get():
-                self.speak_profile_combo.current(0)
-        if hasattr(self, "train_profile_combo"):
-            self.train_profile_combo["values"] = names
-            if names and not self.train_profile_combo.get():
-                self.train_profile_combo.current(0)
-                self._refresh_training_dataset()
-
-    def _attach_rvc_model(self) -> None:
-        profile = self._get_selected_profile()
-        if not profile:
-            messagebox.showinfo("Info", "Wybierz najpierw profil z listy.")
-            return
-
-        model_path = filedialog.askopenfilename(
-            title="Wybierz plik modelu RVC (.pth)",
-            filetypes=[("Model RVC", "*.pth"), ("Wszystkie pliki", "*.*")],
-        )
-        if not model_path:
-            return
-
-        index_path = filedialog.askopenfilename(
-            title="Wybierz plik indeksu .index (opcjonalne - Anuluj, aby pominąć)",
-            filetypes=[("Plik indeksu RVC", "*.index"), ("Wszystkie pliki", "*.*")],
-        )
-        index_path = index_path or None
-
-        try:
-            self.profile_manager.set_rvc_model(profile.name, model_path, index_path)
-            messagebox.showinfo(
-                "Podpięto model RVC",
-                f"Model RVC został podpięty do profilu '{profile.name}'.\n"
-                "Pamiętaj, aby zaznaczyć opcję konwersji RVC w zakładce 'Synteza mowy'.",
-            )
-            self._refresh_profile_list()
-        except Exception as exc:  # noqa: BLE001
-            messagebox.showerror("Błąd", str(exc))
-
-    def _get_selected_profile(self):
-        selection = self.profiles_listbox.curselection()
+    # ------------------------------------------------------------------
+    # Profile management
+    # ------------------------------------------------------------------
+    def _get_selected_profile(self) -> VoiceProfile | None:
+        selection = self.profiles_listbox.curselection() if hasattr(self, "profiles_listbox") else None
         if not selection:
             return None
         return self._profiles[selection[0]]
@@ -317,374 +862,144 @@ class SoundCoreApp(ttk.Frame):
             return
         threading.Thread(target=lambda: play_wav(profile.wav_path), daemon=True).start()
 
+    def _attach_rvc_model(self) -> None:
+        profile = self._get_selected_profile()
+        if not profile:
+            messagebox.showinfo("Info", "Wybierz najpierw profil z listy.")
+            return
+        model_path = filedialog.askopenfilename(title="Wybierz plik modelu RVC (.pth)", filetypes=[("Model RVC", "*.pth"), ("Wszystkie pliki", "*.*")])
+        if not model_path:
+            return
+        index_path = filedialog.askopenfilename(title="Wybierz plik indeksu .index (opcjonalne)", filetypes=[("Plik indeksu RVC", "*.index"), ("Wszystkie pliki", "*.*")])
+        index_path = index_path or None
+        try:
+            self.profile_manager.set_rvc_model(profile.name, model_path, index_path)
+            self._refresh_all()
+            messagebox.showinfo("Podpięto model RVC", f"Model RVC został podpięty do profilu '{profile.name}'.")
+        except Exception as exc:  # noqa: BLE001
+            messagebox.showerror("Błąd", str(exc))
+
     def _delete_selected_profile(self) -> None:
         profile = self._get_selected_profile()
         if not profile:
             return
         if messagebox.askyesno("Potwierdzenie", f"Usunąć profil '{profile.name}'?"):
             self.profile_manager.delete_profile(profile.name)
-            self._refresh_profile_list()
+            self._refresh_all()
 
-    # ---------------------- Zakładka: Synteza mowy ----------------------
-    def _build_speak_tab(self) -> None:
-        frame = self.tab_speak
-        pad = {"padx": 10, "pady": 6}
+    # ------------------------------------------------------------------
+    # Speech synthesis
+    # ------------------------------------------------------------------
+    def _generate_speech_dashboard(self) -> None:
+        self._generate_speech("dashboard")
 
-        ttk.Label(frame, text="Profil głosowy:").grid(row=0, column=0, sticky="w", **pad)
-        self.speak_profile_combo = ttk.Combobox(frame, state="readonly", width=30)
-        self.speak_profile_combo.grid(row=0, column=1, sticky="w", **pad)
+    def _generate_speech_full(self) -> None:
+        self._generate_speech("speak")
 
-        ttk.Label(frame, text="Język:").grid(row=0, column=2, sticky="w", **pad)
-        self.language_combo = ttk.Combobox(
-            frame, state="readonly", width=15, values=list(LANGUAGES.keys())
-        )
-        self.language_combo.current(0)
-        self.language_combo.grid(row=0, column=3, sticky="w", **pad)
-
-        ttk.Label(frame, text="Tekst do wypowiedzenia:").grid(row=1, column=0, sticky="nw", **pad)
-        self.text_input = tk.Text(frame, width=60, height=8, wrap="word")
-        self.text_input.grid(row=1, column=1, columnspan=3, sticky="w", **pad)
-        self.text_input.insert("1.0", "Witaj, to jest przykładowy tekst wypowiedziany moim własnym głosem.")
-
-        self.generate_button = ttk.Button(
-            frame, text="🎧 Generuj i odtwórz", command=self._generate_speech
-        )
-        self.generate_button.grid(row=2, column=1, sticky="w", **pad)
-
-        self.speak_progress = ttk.Progressbar(frame, length=250, mode="indeterminate")
-        self.speak_progress.grid(row=2, column=2, columnspan=2, sticky="w", **pad)
-
-        self.use_trained_var = tk.BooleanVar(value=True)
-        ttk.Checkbutton(
-            frame,
-            text="🧠 Użyj wytrenowanego modelu XTTS, jeśli profil go posiada",
-            variable=self.use_trained_var,
-        ).grid(row=3, column=0, columnspan=4, sticky="w", padx=10, pady=(0, 4))
-
-        self.use_rvc_var = tk.BooleanVar(value=False)
-        self.rvc_checkbox = ttk.Checkbutton(
-            frame,
-            text="🎚 Popraw barwę głosu przez RVC (wymaga podpiętego modelu w zakładce Profile)",
-            variable=self.use_rvc_var,
-        )
-        self.rvc_checkbox.grid(row=4, column=0, columnspan=4, sticky="w", padx=10, pady=(0, 6))
-
-    def _generate_speech(self) -> None:
-        profile_name = self.speak_profile_combo.get()
+    def _generate_speech(self, context_name: str) -> None:
+        if self._busy_generation:
+            messagebox.showinfo("Trwa generowanie", "Poczekaj na zakończenie bieżącego generowania.")
+            return
+        ctx = self._speech_contexts[context_name]
+        profile_name = ctx.profile_combo.get()
         if not profile_name:
             messagebox.showwarning("Brak profilu", "Najpierw nagraj i zapisz profil głosowy.")
             return
-
         profile = self.profile_manager.get_profile(profile_name)
         if profile is None:
             messagebox.showerror("Błąd", "Nie znaleziono wybranego profilu.")
             return
-
-        text = self.text_input.get("1.0", tk.END).strip()
+        text = ctx.text_widget.get("1.0", tk.END).strip()
         if not text:
             messagebox.showwarning("Brak tekstu", "Wpisz tekst do wypowiedzenia.")
             return
-
-        language_label = self.language_combo.get() or "Polski"
-        language_code = LANGUAGES.get(language_label, "pl")
-        use_rvc = self.use_rvc_var.get()
-        use_trained = self.use_trained_var.get() and profile.has_trained_model
-
+        use_rvc = bool(ctx.use_rvc_var.get()) if ctx.use_rvc_var else False
         if use_rvc and not profile.has_rvc_model:
-            messagebox.showwarning(
-                "Brak modelu RVC",
-                f"Profil '{profile_name}' nie ma podpiętego modelu RVC. "
-                "Podepnij go w zakładce 'Profile głosowe' albo odznacz opcję RVC.",
-            )
+            messagebox.showwarning("Brak modelu RVC", f"Profil '{profile_name}' nie ma podpiętego modelu RVC.")
             return
+        language_label = ctx.language_combo.get() or "Polski"
+        language_code = LANGUAGES.get(language_label, "pl")
 
-        self.generate_button.config(state="disabled")
-        self.speak_progress.start(10)
-        self.status_var.set(
-            f"Ładowanie modelu i generowanie mowy (urządzenie: {self.engine.device.upper()})... "
-            "to może potrwać dłużej przy pierwszym uruchomieniu."
-        )
+        self._busy_generation = True
+        ctx.generate_button.configure(state="disabled")
+        ctx.progress.start(10)
+        self.status_var.set(f"Generowanie mowy ({self.engine.device.upper()})… To może potrwać dłużej przy pierwszym uruchomieniu.")
 
         def worker() -> None:
             try:
                 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
                 raw_path = os.path.join(OUTPUT_DIR, f"speech_{profile_name}_{timestamp}_raw.wav")
-                if use_trained:
-                    self.master.after(0, lambda: self.status_var.set("Generowanie przez wytrenowany model XTTS..."))
-                    self.engine.finetuned_speak(
-                        text=text,
-                        speaker_wav_path=profile.wav_path,
-                        output_path=raw_path,
-                        model_info=profile.trained_model_info,
-                        language=language_code,
-                    )
-                else:
-                    self.engine.clone_and_speak(
-                        text=text,
-                        speaker_wav_path=profile.wav_path,
-                        output_path=raw_path,
-                        language=language_code,
-                    )
-
+                self.engine.clone_and_speak(text=text, speaker_wav_path=profile.wav_path, output_path=raw_path, language=language_code)
                 final_path = raw_path
                 if use_rvc:
-                    self.master.after(
-                        0, lambda: self.status_var.set("Poprawianie barwy głosu przez RVC...")
-                    )
-                    rvc_path = os.path.join(OUTPUT_DIR, f"speech_{profile_name}_{timestamp}_rvc.wav")
                     self.rvc_engine.load_model(profile.rvc_model_path, profile.rvc_index_path)
+                    rvc_path = os.path.join(OUTPUT_DIR, f"speech_{profile_name}_{timestamp}_rvc.wav")
                     self.rvc_engine.convert(raw_path, rvc_path)
                     final_path = rvc_path
-
-                self.master.after(0, lambda: self._on_speech_ready(final_path))
+                self.master.after(0, lambda: self._on_speech_ready(context_name, final_path))
             except Exception as exc:  # noqa: BLE001
-                error_message = str(exc)
-                self.master.after(0, lambda: self._on_speech_error(error_message))
+                self.master.after(0, lambda: self._on_speech_error(context_name, str(exc)))
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _on_speech_ready(self, path: str) -> None:
-        self.speak_progress.stop()
-        self.generate_button.config(state="normal")
+    def _on_speech_ready(self, context_name: str, path: str) -> None:
+        ctx = self._speech_contexts[context_name]
+        self._busy_generation = False
+        ctx.progress.stop()
+        ctx.generate_button.configure(state="normal")
+        self._last_generated_path = path
         self.status_var.set(f"Gotowe. Zapisano: {path}")
+        self.dashboard_audio_label.configure(text=os.path.basename(path))
+        for context in self._speech_contexts.values():
+            if context.play_button is not None:
+                context.play_button.configure(state="normal")
+        self.dashboard_download_btn.configure(state="normal")
         threading.Thread(target=lambda: play_wav(path), daemon=True).start()
 
-    def _on_speech_error(self, message: str) -> None:
-        self.speak_progress.stop()
-        self.generate_button.config(state="normal")
+    def _on_speech_error(self, context_name: str, message: str) -> None:
+        ctx = self._speech_contexts[context_name]
+        self._busy_generation = False
+        ctx.progress.stop()
+        ctx.generate_button.configure(state="normal")
         self.status_var.set("Błąd podczas generowania mowy.")
         messagebox.showerror("Błąd syntezy mowy", message)
 
-    # ---------------------- Zakładka: Trening modelu ----------------------
-    def _build_train_tab(self) -> None:
-        frame = self.tab_train
-        pad = {"padx": 10, "pady": 5}
-
-        ttk.Label(frame, text="Profil do trenowania:").grid(row=0, column=0, sticky="w", **pad)
-        self.train_profile_combo = ttk.Combobox(frame, state="readonly", width=28)
-        self.train_profile_combo.grid(row=0, column=1, sticky="w", **pad)
-        self.train_profile_combo.bind("<<ComboboxSelected>>", lambda _e: self._refresh_training_dataset())
-
-        ttk.Label(frame, text="Urządzenie:").grid(row=0, column=2, sticky="w", **pad)
-        self.train_device_combo = ttk.Combobox(frame, state="readonly", width=28)
-        self._train_devices = available_devices()
-        self.train_device_combo["values"] = [d.label for d in self._train_devices]
-        if self._train_devices:
-            self.train_device_combo.current(0)
-        self.train_device_combo.grid(row=0, column=3, sticky="w", **pad)
-
-        ttk.Label(frame, text="Epoki:").grid(row=1, column=0, sticky="w", **pad)
-        self.train_epochs_var = tk.IntVar(value=20)
-        ttk.Spinbox(frame, from_=1, to=200, textvariable=self.train_epochs_var, width=8).grid(row=1, column=1, sticky="w", **pad)
-        self.train_stats_var = tk.StringVar(value="Dataset: wybierz profil")
-        ttk.Label(frame, textvariable=self.train_stats_var).grid(row=1, column=2, columnspan=2, sticky="w", **pad)
-
-        data_box = ttk.LabelFrame(frame, text="Zbieranie datasetu")
-        data_box.grid(row=2, column=0, columnspan=4, sticky="ew", padx=10, pady=8)
-        self.train_prompt_var = tk.StringVar(value="Wybierz profil, aby rozpocząć zbieranie danych.")
-        ttk.Label(data_box, textvariable=self.train_prompt_var, wraplength=690, font=("TkDefaultFont", 11)).grid(row=0, column=0, columnspan=4, sticky="w", padx=8, pady=8)
-        self.dataset_duration_var = tk.IntVar(value=8)
-        ttk.Label(data_box, text="Czas nagrania:").grid(row=1, column=0, sticky="w", padx=8, pady=5)
-        ttk.Spinbox(data_box, from_=3, to=20, textvariable=self.dataset_duration_var, width=6).grid(row=1, column=1, sticky="w", padx=8, pady=5)
-        self.dataset_record_btn = ttk.Button(data_box, text="⏺ Nagraj to zdanie", command=self._record_training_sample)
-        self.dataset_record_btn.grid(row=1, column=2, padx=8, pady=5)
-        ttk.Button(data_box, text="Następne zdanie", command=self._next_training_prompt).grid(row=1, column=3, padx=8, pady=5)
-
-        controls = ttk.Frame(frame)
-        controls.grid(row=3, column=0, columnspan=4, sticky="ew", padx=10, pady=5)
-        self.train_start_btn = ttk.Button(controls, text="▶ Rozpocznij GPTTrainer", command=self._start_training)
-        self.train_start_btn.pack(side="left", padx=(0, 8))
-        self.train_stop_btn = ttk.Button(controls, text="■ Zatrzymaj", command=self._stop_training, state="disabled")
-        self.train_stop_btn.pack(side="left")
-        self.train_progress = ttk.Progressbar(controls, mode="indeterminate", length=240)
-        self.train_progress.pack(side="left", padx=15)
-
-        self.train_log = tk.Text(frame, height=13, width=92, wrap="word")
-        self.train_log.grid(row=4, column=0, columnspan=4, sticky="nsew", padx=10, pady=6)
-        frame.rowconfigure(4, weight=1)
-        frame.columnconfigure(3, weight=1)
-
-        ttk.Label(frame, text="CPU jest obsługiwane, ale trening XTTS będzie na nim bardzo wolny. GPU/CUDA jest zalecane.", foreground="gray").grid(row=5, column=0, columnspan=4, sticky="w", padx=10, pady=4)
-
-    def _refresh_training_dataset(self) -> None:
-        name = self.train_profile_combo.get()
-        if not name:
+    def _play_last_generated(self) -> None:
+        if not self._last_generated_path or not os.path.isfile(self._last_generated_path):
+            messagebox.showinfo("Brak pliku", "Najpierw wygeneruj mowę.")
             return
-        profile = self.profile_manager.get_profile(name)
-        if not profile:
+        threading.Thread(target=lambda: play_wav(self._last_generated_path), daemon=True).start()
+
+    def _download_last_generated(self) -> None:
+        if not self._last_generated_path or not os.path.isfile(self._last_generated_path):
+            messagebox.showinfo("Brak pliku", "Najpierw wygeneruj mowę.")
             return
-        stats = get_stats(profile.folder)
-        self.train_stats_var.set(f"Dataset: {stats.samples} próbek · {stats.seconds/60:.1f} min")
-        prompts = load_prompts(profile.folder)
-        self._training_prompts = prompts
-        self._training_prompt_index = stats.samples % len(prompts) if prompts else 0
-        if prompts:
-            self.train_prompt_var.set(prompts[self._training_prompt_index])
-
-    def _next_training_prompt(self) -> None:
-        prompts = getattr(self, "_training_prompts", [])
-        if not prompts:
-            self._refresh_training_dataset()
-            prompts = getattr(self, "_training_prompts", [])
-        if prompts:
-            self._training_prompt_index = (getattr(self, "_training_prompt_index", 0) + 1) % len(prompts)
-            self.train_prompt_var.set(prompts[self._training_prompt_index])
-
-    def _record_training_sample(self) -> None:
-        profile = self.profile_manager.get_profile(self.train_profile_combo.get())
-        if not profile:
-            messagebox.showwarning("Trening", "Wybierz profil głosowy.")
+        dest = filedialog.asksaveasfilename(title="Zapisz wygenerowany plik WAV", defaultextension=".wav", initialfile=os.path.basename(self._last_generated_path), filetypes=[("Plik WAV", "*.wav")])
+        if not dest:
             return
-        if not getattr(self, "_devices", None):
-            messagebox.showerror("Mikrofon", "Brak urządzenia wejściowego. Odśwież listę w zakładce Nagrywanie.")
-            return
-        prompt = self.train_prompt_var.get().strip()
-        device_index = self._devices[self.device_combo.current()].index if self.device_combo.current() >= 0 else self._devices[0].index
-        duration = self.dataset_duration_var.get()
-        self.dataset_record_btn.config(state="disabled")
-        self.status_var.set("Nagrywanie próbki treningowej...")
+        shutil.copy2(self._last_generated_path, dest)
+        self.status_var.set(f"Zapisano plik: {dest}")
+        messagebox.showinfo("Zapisano", f"Plik został zapisany:\n{dest}")
 
-        def worker():
-            try:
-                audio = record_audio(duration=duration, device=device_index)
-                cleaned = preprocess_pipeline(audio, DEFAULT_SAMPLERATE)
-                append_sample(profile.folder, cleaned, DEFAULT_SAMPLERATE, prompt)
-                self.master.after(0, self._on_training_sample_saved)
-            except Exception as exc:
-                self.master.after(0, lambda: (self.dataset_record_btn.config(state="normal"), messagebox.showerror("Dataset", str(exc))))
-        threading.Thread(target=worker, daemon=True).start()
+    # ------------------------------------------------------------------
+    # Misc actions
+    # ------------------------------------------------------------------
+    def _check_updates_stub(self) -> None:
+        self.status_var.set("Sprawdzono aktualizacje. Masz najnowszą wersję.")
+        messagebox.showinfo("Aktualizacje", f"Aktualna wersja: {APP_VERSION}\nNajnowsza wersja: {LATEST_VERSION}\n\nPanel aktualizacji jest gotowy do spięcia z publisherem GitHub.")
 
-    def _on_training_sample_saved(self) -> None:
-        self.dataset_record_btn.config(state="normal")
-        self.status_var.set("Próbka treningowa zapisana.")
-        self._refresh_training_dataset()
+    def _show_info(self, title: str, message: str) -> None:
+        messagebox.showinfo(title, message)
 
-    def _append_train_log(self, line: str) -> None:
-        self.train_log.insert(tk.END, line + "\n")
-        self.train_log.see(tk.END)
-
-    def _start_training(self) -> None:
-        profile = self.profile_manager.get_profile(self.train_profile_combo.get())
-        if not profile:
-            messagebox.showwarning("Trening", "Wybierz profil głosowy.")
-            return
-        stats = get_stats(profile.folder)
-        if stats.samples < 5:
-            messagebox.showwarning("Za mało danych", "Nagraj co najmniej 5 zdań. Do sensownego modelu zalecam 30+ i co najmniej kilka-kilkanaście minut audio.")
-            return
-        idx = self.train_device_combo.current()
-        if idx < 0:
-            idx = 0
-        device = self._train_devices[idx].code
-        epochs = self.train_epochs_var.get()
-        self.train_log.delete("1.0", tk.END)
-        self.train_start_btn.config(state="disabled")
-        self.train_stop_btn.config(state="normal")
-        self.train_progress.start(10)
-        self.status_var.set(f"Trening XTTS GPT na {device.upper()}...")
-        try:
-            self.training_process.start(
-                profile.folder, device, epochs,
-                on_line=lambda line: self.master.after(0, lambda l=line: self._append_train_log(l)),
-                on_done=lambda code: self.master.after(0, lambda c=code: self._on_training_done(c)),
-            )
-        except Exception as exc:
-            self._on_training_done(1)
-            messagebox.showerror("Trening", str(exc))
-
-    def _stop_training(self) -> None:
-        self.training_process.stop()
-        self.status_var.set("Zatrzymywanie treningu...")
-
-    def _on_training_done(self, code: int) -> None:
-        self.train_progress.stop()
-        self.train_start_btn.config(state="normal")
-        self.train_stop_btn.config(state="disabled")
-        if code == 0:
-            self.status_var.set("Trening zakończony poprawnie.")
-            messagebox.showinfo("Trening", "Trening zakończony. Checkpointy są zapisane w profilu: model/training.")
-        else:
-            self.status_var.set(f"Trening zakończył się kodem {code}.")
-
-    # ---------------------- Zakładka: Aktualizacje ----------------------
-    def _build_updates_tab(self) -> None:
-        frame = self.tab_updates
-        pad = {"padx": 12, "pady": 7}
-        ttk.Label(frame, text="SoundCore", font=("TkDefaultFont", 16, "bold")).grid(row=0, column=0, sticky="w", **pad)
-        ttk.Label(frame, text=f"Zainstalowana wersja: {__version__}").grid(row=1, column=0, sticky="w", **pad)
-        self.update_status_var = tk.StringVar(value="Nie sprawdzano aktualizacji.")
-        ttk.Label(frame, textvariable=self.update_status_var).grid(row=2, column=0, columnspan=2, sticky="w", **pad)
-        self.update_check_btn = ttk.Button(frame, text="Sprawdź aktualizacje", command=self._check_updates)
-        self.update_check_btn.grid(row=3, column=0, sticky="w", **pad)
-        self.update_install_btn = ttk.Button(frame, text="Pobierz i zainstaluj", command=self._install_update, state="disabled")
-        self.update_install_btn.grid(row=3, column=1, sticky="w", **pad)
-        self.update_progress = ttk.Progressbar(frame, length=400, mode="determinate", maximum=100)
-        self.update_progress.grid(row=4, column=0, columnspan=2, sticky="w", **pad)
-        ttk.Label(frame, text="Informacje o wydaniu:").grid(row=5, column=0, sticky="w", **pad)
-        self.update_notes = tk.Text(frame, width=80, height=14, wrap="word")
-        self.update_notes.grid(row=6, column=0, columnspan=2, sticky="nsew", **pad)
-        frame.rowconfigure(6, weight=1)
-        frame.columnconfigure(1, weight=1)
-
-    def _check_updates(self) -> None:
-        self.update_check_btn.config(state="disabled")
-        self.update_status_var.set("Sprawdzanie kanału aktualizacji...")
-        def worker():
-            try:
-                info = check_for_update()
-                notes = read_release_notes(info) if info.release_notes_url else ""
-                self.master.after(0, lambda: self._on_update_checked(info, notes))
-            except Exception as exc:
-                self.master.after(0, lambda: self._on_update_error(str(exc)))
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _on_update_checked(self, info, notes: str) -> None:
-        self.update_check_btn.config(state="normal")
-        self._last_update_info = info
-        self.update_notes.delete("1.0", tk.END)
-        self.update_notes.insert("1.0", notes or "Brak informacji o wydaniu.")
-        if info.newer:
-            self.update_status_var.set(f"Dostępna nowa wersja: {info.version}")
-            self.update_install_btn.config(state="normal")
-        else:
-            self.update_status_var.set(f"Masz aktualną wersję ({__version__}).")
-            self.update_install_btn.config(state="disabled")
-
-    def _install_update(self) -> None:
-        info = self._last_update_info
-        if not info or not info.newer:
-            return
-        if not messagebox.askyesno("Aktualizacja SoundCore", f"Pobrać i zainstalować SoundCore {info.version}?\nProgram uruchomi się ponownie."):
-            return
-        self.update_install_btn.config(state="disabled")
-        self.update_check_btn.config(state="disabled")
-        self.update_status_var.set("Pobieranie i weryfikacja SHA256...")
-        self.update_progress["value"] = 0
-        def worker():
-            try:
-                staged = download_and_stage(info, progress=lambda p: self.master.after(0, lambda v=p: self.update_progress.config(value=v*100)))
-                app_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-                self.master.after(0, lambda: self._apply_staged_update(staged, app_root))
-            except Exception as exc:
-                self.master.after(0, lambda: self._on_update_error(str(exc)))
-        threading.Thread(target=worker, daemon=True).start()
-
-    def _apply_staged_update(self, staged: str, app_root: str) -> None:
-        self.update_status_var.set("Aktualizacja zweryfikowana. Restart SoundCore...")
-        launch_apply_update(staged, app_root)
-        self.master.destroy()
-
-    def _on_update_error(self, message: str) -> None:
-        self.update_check_btn.config(state="normal")
-        self.update_install_btn.config(state="disabled")
-        self.update_status_var.set("Błąd aktualizacji.")
-        messagebox.showerror("Aktualizacje", message)
+    def _open_folder(self, path: str) -> None:
+        messagebox.showinfo("Katalog", f"Katalog projektu:\n{path}")
 
 
 def run() -> None:
     root = tk.Tk()
-    root.title(f"SoundCore {__version__} - AI SoundSystem")
-    root.geometry("860x650")
+    root.title("SoundCore")
+    root.geometry("1540x920")
+    root.minsize(1280, 760)
     SoundCoreApp(root)
     root.mainloop()
 

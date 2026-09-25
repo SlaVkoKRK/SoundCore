@@ -1,4 +1,26 @@
-"""SoundCore XTTS-v2 inference engine: zero-shot and local fine-tuned models."""
+"""
+tts_engine.py
+-------------
+Silnik syntezy mowy z klonowaniem głosu (voice cloning), oparty
+o model Coqui XTTS-v2. Model ten pozwala na klonowanie barwy głosu
+i sposobu mówienia (dykcji, intonacji) na podstawie krótkiej próbki
+referencyjnej (kilkanaście-kilkadziesiąt sekund nagrania), bez
+potrzeby pełnego treningu sieci od zera.
+
+Silnik automatycznie wykrywa dostępność GPU (CUDA) i korzysta z niego,
+jeśli jest dostępne - w przeciwnym razie działa na CPU (wolniej, ale
+w pełni funkcjonalnie).
+
+Model jest ładowany leniwie (lazy loading) - dopiero przy pierwszym
+użyciu, aby aplikacja startowała szybko i nie zużywała pamięci, jeśli
+użytkownik jeszcze nie generuje mowy.
+
+Uwaga: pierwsze uruchomienie wymaga połączenia z internetem - biblioteka
+`TTS` pobiera wagi modelu (ok. 1.5-2 GB) z repozytorium Coqui/HuggingFace
+i zapisuje je lokalnie w cache (~/.local/share/tts). Kolejne uruchomienia
+działają już offline.
+"""
+
 from __future__ import annotations
 
 import os
@@ -8,6 +30,7 @@ from typing import Optional
 
 MODEL_NAME = "tts_models/multilingual/multi-dataset/xtts_v2"
 
+
 @dataclass
 class EngineStatus:
     device: str
@@ -15,20 +38,28 @@ class EngineStatus:
     loading: bool
     error: Optional[str] = None
 
+
 class VoiceEngine:
+    """
+    Wrapper na model Coqui XTTS-v2, udostępniający prosty interfejs
+    do klonowania głosu i syntezy tekstu na mowę.
+    """
+
     def __init__(self) -> None:
         self._model = None
-        self._custom_model = None
-        self._custom_key = None
         self._device = self._detect_device()
         self._loading = False
         self._load_error: Optional[str] = None
         self._lock = threading.Lock()
 
+    # ------------------------------------------------------------------
+    # Wykrywanie urządzenia obliczeniowego (CPU/GPU)
+    # ------------------------------------------------------------------
     @staticmethod
     def _detect_device() -> str:
         try:
             import torch
+
             if torch.cuda.is_available():
                 return "cuda"
         except ImportError:
@@ -40,67 +71,76 @@ class VoiceEngine:
         return self._device
 
     def status(self) -> EngineStatus:
-        return EngineStatus(self._device, self._model is not None, self._loading, self._load_error)
+        return EngineStatus(
+            device=self._device,
+            model_loaded=self._model is not None,
+            loading=self._loading,
+            error=self._load_error,
+        )
 
+    # ------------------------------------------------------------------
+    # Ładowanie modelu (lazy loading, thread-safe)
+    # ------------------------------------------------------------------
     def ensure_loaded(self) -> None:
+        """Ładuje model TTS, jeśli jeszcze nie jest załadowany. Blokujące."""
         with self._lock:
             if self._model is not None:
                 return
             self._loading = True
             self._load_error = None
             try:
-                from TTS.api import TTS
+                from TTS.api import TTS  # import lokalny - ciężka zależność
+
                 self._model = TTS(MODEL_NAME).to(self._device)
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001
                 self._load_error = str(exc)
                 raise
             finally:
                 self._loading = False
 
-    def clone_and_speak(self, text: str, speaker_wav_path: str, output_path: str, language: str = "pl") -> str:
+    # ------------------------------------------------------------------
+    # Klonowanie głosu + synteza tekstu
+    # ------------------------------------------------------------------
+    def clone_and_speak(
+        self,
+        text: str,
+        speaker_wav_path: str,
+        output_path: str,
+        language: str = "pl",
+    ) -> str:
+        """
+        Generuje plik audio z wypowiedzianym `text`, w głosie sklonowanym
+        z próbki referencyjnej `speaker_wav_path`.
+
+        Args:
+            text: tekst do wypowiedzenia.
+            speaker_wav_path: ścieżka do pliku .wav z próbką głosu (referencja).
+            output_path: ścieżka, gdzie zapisać wygenerowany plik .wav.
+            language: kod języka (np. "pl", "en", "de"...).
+
+        Returns:
+            Ścieżka do wygenerowanego pliku audio (output_path).
+        """
         if not text.strip():
             raise ValueError("Tekst do syntezy nie może być pusty.")
         if not os.path.isfile(speaker_wav_path):
             raise FileNotFoundError(f"Nie znaleziono próbki głosu: {speaker_wav_path}")
+
         self.ensure_loaded()
-        self._model.tts_to_file(text=text, speaker_wav=speaker_wav_path, language=language, file_path=output_path)
+
+        self._model.tts_to_file(
+            text=text,
+            speaker_wav=speaker_wav_path,
+            language=language,
+            file_path=output_path,
+        )
         return output_path
 
-    def _load_finetuned(self, checkpoint: str, config_path: str, vocab_path: str):
-        key = (os.path.abspath(checkpoint), os.path.abspath(config_path), os.path.abspath(vocab_path), self._device)
-        with self._lock:
-            if self._custom_model is not None and self._custom_key == key:
-                return self._custom_model
-            import torch
-            from TTS.tts.configs.xtts_config import XttsConfig
-            from TTS.tts.models.xtts import Xtts
-            cfg = XttsConfig()
-            cfg.load_json(config_path)
-            model = Xtts.init_from_config(cfg)
-            model.load_checkpoint(cfg, checkpoint_path=checkpoint, vocab_path=vocab_path, use_deepspeed=False)
-            model.to(self._device)
-            model.eval()
-            self._custom_model = model
-            self._custom_key = key
-            return model
 
-    def finetuned_speak(self, text: str, speaker_wav_path: str, output_path: str, model_info: dict, language: str = "pl") -> str:
-        import torch
-        import torchaudio
-        checkpoint = model_info.get("checkpoint", "")
-        config_path = model_info.get("config", "")
-        vocab_path = model_info.get("vocab", "")
-        for label, path in (("checkpoint", checkpoint), ("config", config_path), ("vocab", vocab_path), ("reference", speaker_wav_path)):
-            if not path or not os.path.isfile(path):
-                raise FileNotFoundError(f"Brak pliku {label} wytrenowanego modelu: {path}")
-        model = self._load_finetuned(checkpoint, config_path, vocab_path)
-        gpt_cond_latent, speaker_embedding = model.get_conditioning_latents(audio_path=[speaker_wav_path])
-        out = model.inference(text, language, gpt_cond_latent, speaker_embedding, temperature=0.7)
-        wav = torch.tensor(out["wav"]).unsqueeze(0).cpu()
-        torchaudio.save(output_path, wav, 24000)
-        return output_path
-
+# Pojedyncza, globalna instancja silnika (singleton) - ładowanie modelu
+# jest kosztowne, więc nie chcemy tworzyć wielu kopii w ramach aplikacji.
 _engine_instance: Optional[VoiceEngine] = None
+
 
 def get_engine() -> VoiceEngine:
     global _engine_instance

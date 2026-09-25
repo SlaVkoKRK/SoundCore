@@ -47,6 +47,3 @@ TTS>=0.22.0
 # ale na niektórych dystrybucjach Linuksa trzeba doinstalować pakiet systemowy:
 #   Ubuntu/Debian: sudo apt install python3-tk
 #   Fedora:        sudo dnf install python3-tkinter
-
-# --- Aktualizacje / wersjonowanie ---
-packaging>=23.0

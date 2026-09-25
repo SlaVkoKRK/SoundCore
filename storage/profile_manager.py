@@ -47,28 +47,6 @@ class VoiceProfile:
         return os.path.join(self.folder, "reference.wav")
 
     @property
-    def trained_model_result_path(self) -> str:
-        return os.path.join(self.folder, "model", "training_result.json")
-
-    @property
-    def trained_model_info(self) -> Optional[dict]:
-        path = self.trained_model_result_path
-        if not os.path.isfile(path):
-            return None
-        try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            if data.get("checkpoint") and os.path.isfile(data["checkpoint"]):
-                return data
-        except (OSError, ValueError, TypeError):
-            pass
-        return None
-
-    @property
-    def has_trained_model(self) -> bool:
-        return self.trained_model_info is not None
-
-    @property
     def has_rvc_model(self) -> bool:
         return bool(self.rvc_model_path) and os.path.isfile(self.rvc_model_path)
 

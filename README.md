@@ -1,139 +1,246 @@
-# SoundCore
+# SoundCore – AI SoundSystem
 
-SoundCore to lokalna aplikacja desktopowa do nagrywania głosu, klonowania mowy przez XTTS-v2 oraz trenowania własnego modelu głosu metodą fine-tuningu GPT encodera XTTS-v2.
+Aplikacja desktopowa (Python) do klonowania głosu i syntezy mowy (TTS).
+Program nagrywa próbkę głosu z mikrofonu (wbudowanego lub USB), na jej
+podstawie "uczy się" barwy głosu i sposobu mówienia (dykcji, intonacji),
+a następnie potrafi odczytać dowolny tekst w tym głosie.
 
-## Najważniejsze funkcje
+## Spis treści
 
-- nagrywanie i czyszczenie próbek głosu z mikrofonu,
-- profile głosowe przechowywane lokalnie,
-- XTTS-v2 zero-shot voice cloning,
-- własny dataset: nagrywanie zdań wraz z dokładną transkrypcją,
-- fine-tuning XTTS-v2 przez `GPTTrainer`,
-- trening na NVIDIA CUDA lub CPU,
-- osobny proces treningowy, dzięki czemu GUI nie jest blokowane,
-- automatyczne używanie wytrenowanego modelu podczas syntezy,
-- opcjonalny post-processing RVC,
-- aktualizacje z GitHub Releases z weryfikacją SHA256,
-- publiczna dystrybucja źródeł bez lokalnych profili, nagrań i modeli.
+1. [Architektura projektu](#architektura-projektu)
+2. [Jak to działa – podejście techniczne](#jak-to-działa--podejście-techniczne)
+3. [Instalacja](#instalacja)
+4. [Uruchomienie](#uruchomienie)
+5. [Instrukcja użytkowania](#instrukcja-użytkowania)
+6. [Poprawa wierności głosu przez RVC (opcjonalnie)](#poprawa-wierności-głosu-przez-rvc-opcjonalnie)
+7. [Ograniczenia i możliwości rozwoju](#ograniczenia-i-możliwości-rozwoju)
+8. [Zagadnienia do prezentacji/obrony projektu](#zagadnienia-do-prezentacjiobrony-projektu)
 
-## Wymagania
+---
 
-Zalecany jest Python 3.10. Stos Coqui TTS/XTTS jest wrażliwy na wersje PyTorch, Transformers i NumPy, dlatego korzystaj z wersji zapisanych w `requirements.txt`.
+## Architektura projektu
 
-```powershell
+```
+soundcore/
+├── main.py                    # punkt wejścia aplikacji
+├── requirements.txt
+├── recorder/
+│   └── recorder.py            # nagrywanie z mikrofonu, listowanie urządzeń, odtwarzanie
+├── preprocessing/
+│   └── audio_utils.py         # czyszczenie audio: normalizacja, VAD, resampling
+├── voice_engine/
+│   ├── tts_engine.py          # wrapper na model Coqui XTTS-v2 (klonowanie głosu + TTS)
+│   └── rvc_engine.py          # opcjonalny wrapper na RVC (poprawa barwy głosu)
+├── requirements-rvc.txt       # opcjonalne zależności modułu RVC
+├── storage/
+│   └── profile_manager.py     # zapisywanie/wczytywanie profili głosowych na dysku
+├── gui/
+│   └── app.py                 # interfejs graficzny (Tkinter)
+├── voice_profiles/            # tu zapisywane są profile głosowe użytkowników
+└── output/                    # tu zapisywane są wygenerowane pliki mowy
+```
+
+Podział na moduły odzwierciedla pipeline przetwarzania danych:
+
+```
+Mikrofon → [recorder] → surowe audio
+                 ↓
+        [preprocessing] → oczyszczona próbka referencyjna
+                 ↓
+         [storage] → zapisany profil głosowy (wav + metadane)
+                 ↓
+   tekst + profil → [voice_engine] → wygenerowana mowa (wav)
+                 ↓
+              odtworzenie
+```
+
+## Jak to działa – podejście techniczne
+
+Pełne trenowanie modelu TTS "od zera" na pojedynczym głosie wymagałoby
+dziesiątek godzin nagrań i dużej mocy obliczeniowej (dni treningu na GPU),
+co jest nierealne w skali projektu studenckiego. Dlatego SoundCore
+wykorzystuje podejście **voice cloning (few-shot speaker adaptation)**:
+
+- Gotowy, wytrenowany wcześniej model wielojęzyczny (**Coqui XTTS-v2**)
+  potrafi na podstawie krótkiej próbki referencyjnej (kilkanaście-
+  kilkadziesiąt sekund nagrania) wyodrębnić tzw. **embedding mówcy**
+  (ang. *speaker embedding*) – wektor liczbowy opisujący barwę głosu,
+  tempo mówienia i charakterystyczne cechy wymowy.
+- Ten embedding jest następnie wykorzystywany w trakcie generowania
+  mowy (inferencji), warunkując model tak, by wygenerowany dźwięk
+  brzmiał jak głos z próbki – bez potrzeby ponownego trenowania sieci.
+- Dzięki temu "nauka" głosu trwa sekundy (samo przetworzenie próbki),
+  a nie godziny/dni, jak przy klasycznym treningu modelu TTS od zera.
+
+Model automatycznie wykorzystuje GPU (CUDA), jeśli jest dostępne –
+w przeciwnym razie działa na CPU (wolniej, ale w pełni funkcjonalnie).
+
+## Instalacja
+
+Wymagany Python 3.10 lub 3.11 (zalecane ze względu na kompatybilność
+biblioteki `TTS`).
+
+```bash
+# 1. Utwórz i aktywuj wirtualne środowisko (zalecane)
 python -m venv venv
-.\venv\Scripts\activate
-python -m pip install --upgrade pip
+source venv/bin/activate        # Linux/Mac
+venv\Scripts\activate           # Windows
+
+# 2. Zainstaluj zależności
 pip install -r requirements.txt
+```
+
+Na Linuksie może być potrzebny systemowy pakiet Tkinter:
+```bash
+sudo apt install python3-tk        # Ubuntu/Debian
+sudo dnf install python3-tkinter   # Fedora
+```
+
+Jeśli masz kartę graficzną NVIDIA i chcesz przyspieszenia GPU, zainstaluj
+najpierw wersję `torch` z obsługą CUDA zgodnie z instrukcją na
+[pytorch.org/get-started/locally](https://pytorch.org/get-started/locally/),
+a dopiero potem `pip install TTS`. Bez tego kroku aplikacja i tak zadziała –
+automatycznie wykryje brak GPU i przełączy się na CPU.
+
+## Uruchomienie
+
+```bash
 python main.py
 ```
 
-### NVIDIA CUDA
+Przy **pierwszym** wygenerowaniu mowy aplikacja pobierze model XTTS-v2
+(ok. 1.5–2 GB) z repozytorium Coqui – wymagane jest wtedy połączenie
+z internetem. Kolejne uruchomienia działają już offline (model jest
+zapisany w lokalnym cache).
 
-SoundCore wykrywa CUDA przez PyTorch. Jeżeli chcesz trenować na GPU, zainstaluj build PyTorch zgodny z CUDA dla swojej karty, a następnie pozostałe zależności. W zakładce **Trening modelu** pojawi się `GPU / CUDA — <nazwa karty>`.
+## Instrukcja użytkowania
 
-CPU jest obsługiwane funkcjonalnie, jednak fine-tuning XTTS-v2 może być na nim wielokrotnie wolniejszy.
+1. **Zakładka „Nagrywanie”**
+   - Wybierz mikrofon z listy urządzeń.
+   - Ustaw długość nagrania (zalecane min. 15–20 sekund).
+   - Kliknij „Rozpocznij nagrywanie” i mów naturalnie, wyraźnie.
+   - Odsłuchaj nagranie, nadaj mu nazwę i zapisz jako profil głosowy.
 
-## Trening własnego głosu
+2. **Zakładka „Profile głosowe”**
+   - Przeglądaj zapisane profile, odsłuchuj próbki referencyjne,
+     usuwaj niepotrzebne profile.
 
-1. Utwórz profil w zakładce **Nagrywanie**.
-2. Otwórz **Trening modelu** i wybierz profil.
-3. Nagrywaj wyświetlane zdania. Każda próbka trafia do prywatnego katalogu profilu `voice_profiles/<profil>/dataset/`.
-4. Zalecane jest co najmniej kilkadziesiąt czystych, zróżnicowanych próbek. GUI pozwala uruchomić trening od 5 próbek wyłącznie po to, by dało się sprawdzić pipeline.
-5. Wybierz `GPU / CUDA` albo `CPU`, liczbę epok i kliknij **Rozpocznij GPTTrainer**.
-6. Checkpoint, konfiguracja i wynik treningu są przechowywane w `voice_profiles/<profil>/model/`.
-7. W **Syntezie mowy** pozostaw zaznaczone **Użyj wytrenowanego modelu XTTS**. Jeśli profil ma prawidłowy checkpoint, SoundCore użyje go zamiast zwykłego zero-shot.
+3. **Zakładka „Synteza mowy”**
+   - Wybierz profil głosowy i język tekstu.
+   - Wpisz tekst do wypowiedzenia.
+   - Kliknij „Generuj i odtwórz” – wygenerowany plik zostanie zapisany
+     w folderze `output/` i automatycznie odtworzony.
 
-SoundCore opiera trening na oficjalnej architekturze Coqui XTTS-v2: `GPTArgs`, `GPTTrainerConfig`, `GPTTrainer` i `Trainer`.
+## Poprawa wierności głosu przez RVC (opcjonalnie)
 
-## Dane prywatne
+Zero-shot cloning w XTTS (opisany wyżej) ma naturalny sufit jakości –
+generuje głos "podobny", ale nie identyczny z oryginałem, bo nie jest
+trenowany na Twoim głosie, tylko warunkowany krótką próbką. Aby zbliżyć
+się bardziej do 1:1, SoundCore obsługuje dodatkowy, opcjonalny krok:
+konwersję wygenerowanej mowy przez **RVC (Retrieval-based Voice
+Conversion)** – technikę, która wymaga jednorazowego wytrenowania
+małego modelu bezpośrednio na Twoim głosie.
 
-Repozytorium nie powinno zawierać danych użytkownika. `.gitignore` blokuje m.in.:
+### Jak to działa
 
-- `voice_profiles/`,
-- pliki WAV w `output/`,
-- `*.pth`, `*.pt`, `*.ckpt`, `*.index`,
-- `.env`, klucze i tokeny,
-- cache i środowiska wirtualne.
-
-Przed publikacją zawsze warto dodatkowo wykonać `git status` i sprawdzić listę plików.
-
-## Aktualizacje
-
-Zakładka **Aktualizacje** pobiera:
-
-`https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/channel.json`
-
-Kanał wskazuje wersję, URL paczki i SHA256. SoundCore:
-
-1. sprawdza numer wersji,
-2. pobiera paczkę z GitHub Release,
-3. weryfikuje SHA256,
-4. sprawdza ścieżki archiwum przed rozpakowaniem,
-5. zamyka aplikację,
-6. podmienia kod,
-7. zachowuje `voice_profiles`, `output`, `venv/.venv` i `.git`,
-8. uruchamia SoundCore ponownie.
-
-## Publikacja na GitHub
-
-W katalogu projektu znajduje się `publish_soundcore.ps1`. Jest wzorowany na publisherze VEYRA i używa GitHub CLI (`gh`). Domyślne repozytorium to:
-
-`SlaVkoKRK/SoundCore`
-
-Jeśli repo jeszcze nie istnieje, skrypt utworzy je jako **publiczne**. Następnie publikuje źródła, tworzy GitHub Release i dopiero na końcu aktywuje nowy `dist/channel.json`.
-
-```powershell
-.\publish_soundcore.ps1
+```
+tekst → XTTS (klonowanie zero-shot) → surowe audio
+                                            ↓
+                          RVC (model wytrenowany na Twoim głosie)
+                                            ↓
+                              audio z poprawioną barwą głosu
 ```
 
-Można wskazać inne repo:
+RVC nie generuje mowy z tekstu – konwertuje już istniejące audio,
+zamieniając barwę głosu na tę, na której model był trenowany. Ponieważ
+model jest realnie douczony (a nie tylko "zero-shot"), wierność barwy
+jest zwykle zauważalnie lepsza.
 
-```powershell
-.\publish_soundcore.ps1 -Repo "TwojLogin/SoundCore"
+### Krok 1: Zainstaluj zależności RVC
+
+```bash
+pip install -r requirements-rvc.txt
 ```
 
-Wymagane:
+(Ten krok jest opcjonalny – jeśli go pominiesz, reszta aplikacji działa
+normalnie, po prostu bez opcji poprawy barwy głosu.)
 
-```powershell
-winget install --id GitHub.cli
-gh auth login
-```
+### Krok 2: Wytrenuj własny model RVC (narzędzie zewnętrzne)
 
-Skrypt buduje:
+Pisanie własnego pipeline'u treningowego RVC od zera wykracza poza ten
+projekt (wymaga m.in. ekstrakcji cech HuBERT, budowy indeksu FAISS,
+pętli treningowej – to osobny, duży projekt sam w sobie). Zamiast tego
+użyj dojrzałego, gotowego narzędzia, np. **Applio**
+(https://github.com/IAHispano/Applio) – forka RVC z prostym
+jednoklikowym instalatorem, lub oryginalnego
+**RVC-Project WebUI** (https://github.com/RVC-Project/Retrieval-based-Voice-Conversion-WebUI).
+Sprawdź aktualny stan tych projektów – narzędzia community potrafią się
+zmieniać/przenosić.
 
-- `soundcore_update.tar.gz` — paczka dla automatycznego aktualizatora,
-- `SoundCore-<wersja>-source.tar.gz` — pełne publiczne źródła,
-- pliki SHA256,
-- `release.json`,
-- informacje o wydaniu,
-- `channel.json`.
+Ogólny proces (szczegóły w dokumentacji wybranego narzędzia):
+1. Nagraj 5–15+ minut czystego, zróżnicowanego audio swojego głosu
+   (im więcej i czystsze nagrania, tym lepszy efekt).
+2. W narzędziu treningowym uruchom preprocessing (dzielenie na
+   fragmenty, ekstrakcja cech) i trening (na CPU realnie liczony w
+   dziesiątkach minut do kilku godzin, zależnie od ilości danych i mocy
+   procesora; na GPU znacznie szybciej).
+3. Po treningu będziesz mieć dwa pliki: `<nazwa>.pth` (model) i
+   opcjonalnie `<nazwa>.index` (indeks poprawiający precyzję barwy).
 
-## Struktura
+### Krok 3: Podepnij model w SoundCore
 
-```text
-soundcore/
-├── main.py
-├── version.py
-├── gui/
-├── recorder/
-├── preprocessing/
-├── storage/
-├── voice_engine/
-├── training/
-│   ├── dataset.py
-│   ├── manager.py
-│   └── train_xtts.py
-├── updater/
-│   ├── update_manager.py
-│   └── apply_update.py
-├── tools/
-│   └── build_release.py
-├── voice_profiles/       # prywatne, niepublikowane
-├── output/               # prywatne, niepublikowane
-└── publish_soundcore.ps1
-```
+1. W zakładce **„Profile głosowe”** wybierz profil z listy i kliknij
+   **„🎚 Podepnij model RVC”**.
+2. Wskaż plik `.pth`, a następnie (opcjonalnie) plik `.index`.
+3. W zakładce **„Synteza mowy”** zaznacz checkbox **„Popraw barwę głosu
+   przez RVC”** przed kliknięciem „Generuj i odtwórz”.
 
-## Wersja
+Wygenerowana mowa zostanie najpierw stworzona przez XTTS, a następnie
+automatycznie przepuszczona przez Twój model RVC.
 
-Aktualna wersja: **0.2.0**.
+### Uwaga o konfliktach zależności
+
+Stos zależności RVC (`fairseq`, `faiss`, `torchcrepe`, `pyworld`) bywa
+równie wymagający jak TTS/XTTS. Jeśli napotkasz konflikty wersji
+(numpy/torch/itp.), stosuj tę samą strategię co przy instalacji TTS:
+instaluj pakiety pojedynczo i czytaj dokładnie komunikaty błędów –
+zwykle wskazują dokładnie, którą wersję czego przypiąć.
+
+## Ograniczenia i możliwości rozwoju
+
+
+
+**Ograniczenia obecnej wersji:**
+- Jakość klonowania głosu zależy od czystości próbki referencyjnej
+  (zalecane nagrywanie w cichym pomieszczeniu, bez echa i szumów tła).
+- Generowanie na CPU jest wolniejsze niż na GPU (dłuższe zdania mogą
+  generować się kilkanaście-kilkadziesiąt sekund).
+- Model nie jest douczany (fine-tuned) na danych użytkownika trwale –
+  klonowanie odbywa się "w locie" (zero-shot/few-shot) przy każdej syntezie.
+
+**Możliwe kierunki rozwoju (dobre pod dalszą część projektu/pracę dyplomową):**
+- Fine-tuning modelu na większym zbiorze nagrań danej osoby (trwałe
+  dostrojenie wag sieci, a nie tylko embedding mówcy) – wyższa jakość
+  kosztem dłuższego treningu.
+- Dodanie modułu redukcji szumów (np. RNNoise, DeepFilterNet) przed
+  zapisem próbki referencyjnej.
+- Kontrola prozodii/emocji w generowanej mowie.
+- Wersja webowa (nagrywanie przez przeglądarkę + backend API).
+- Eksport/import profili głosowych (współdzielenie między instalacjami).
+
+## Zagadnienia do prezentacji/obrony projektu
+
+Warto umieć krótko wyjaśnić:
+- **Speaker embedding** – jak model reprezentuje "tożsamość" głosu jako
+  wektor liczbowy, niezależnie od wypowiadanego tekstu.
+- **Mel-spektrogram** – pośrednia reprezentacja dźwięku (czasowo-
+  częstotliwościowa), na której operują modele TTS przed etapem wokodera.
+- **Wokoder (vocoder)** – sieć neuronowa zamieniająca mel-spektrogram
+  z powrotem na falę dźwiękową (surowe próbki audio).
+- **Zero-/few-shot voice cloning** – różnica między klonowaniem "w locie"
+  (bez treningu) a pełnym fine-tuningiem modelu na głosie danej osoby.
+- **VAD (Voice Activity Detection)** – wykrywanie fragmentów mowy vs.
+  cisza/szum, zastosowane tu do przycinania nagrań.
+- Dlaczego pełny trening TTS od zera jest niepraktyczny w tej skali
+  (ilość danych, czas treningu, moc obliczeniowa) – i dlaczego transfer
+  learning / voice cloning to rozsądny kompromis.
