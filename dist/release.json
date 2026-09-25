@@ -1,0 +1,11 @@
+{
+  "app": "SoundCore",
+  "version": "0.2.0",
+  "tag": "v0.2.0",
+  "repo": "SlaVkoKRK/SoundCore",
+  "update_package": "soundcore_update.tar.gz",
+  "update_sha256": "cc0ac90aa1881840572bd6369ab699c09886506a1a7868f8e9ec228d474c28dc",
+  "source_package": "SoundCore-0.2.0-source.tar.gz",
+  "source_sha256": "0a4dc30e5ffd271d0bdecde7c38b3e96870885db86880659fe8384c20156194d",
+  "release_notes": "RELEASE_NOTES_0.2.0.md"
+}

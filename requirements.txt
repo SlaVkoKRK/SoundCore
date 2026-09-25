@@ -1,0 +1,52 @@
+# UWAGA: nowe wersje setuptools (81+) usunęły moduł pkg_resources,
+# od którego zależy TTS/jego zależności - stąd sztywny pin poniżej.
+setuptools<81
+
+# UWAGA - kolejność instalacji ma znaczenie przy konfliktach zależności.
+# Jeśli `pip install -r requirements.txt` zgłasza konflikt wersji
+# (numpy/scipy vs TTS), zainstaluj ręcznie w tej kolejności:
+#   pip install TTS
+#   pip install sounddevice soundfile
+#
+# --- Nagrywanie i obsługa audio ---
+sounddevice>=0.4.6
+soundfile>=0.12.1
+# Uwaga: numpy i scipy CELOWO bez podanych wersji.
+# Biblioteka TTS (poniżej) narzuca bardzo konkretne wersje numpy
+# (np. numpy==1.22.0 dla Python <=3.10), więc pozwalamy pipowi
+# dobrać wersje kompatybilne z TTS zamiast je tu sztywno wymuszać.
+# UWAGA: numpy MUSI zostać dokładnie na tej wersji - TTS 0.22.0 wymaga
+# dokładnie numpy==1.22.0 (dla Python <=3.10). Inne pakiety (np. transformers)
+# przy instalacji potrafią nadpisać numpy nowszą wersją i wtedy TTS przestaje
+# działać - jeśli tak się stanie, uruchom ponownie:
+#   pip install "numpy==1.22.0" --force-reinstall
+numpy==1.22.0
+scipy
+
+# --- Silnik voice cloning / TTS ---
+# Uwaga: TTS instaluje też torch jako zależność.
+# Na maszynie tylko-CPU wystarczy zwykły `pip install TTS` (torch w wersji CPU).
+# Jeśli masz kartę NVIDIA i chcesz przyspieszenia GPU, zainstaluj najpierw
+# odpowiednią wersję torch z obsługą CUDA zgodnie z instrukcją na
+# https://pytorch.org/get-started/locally/ , a dopiero potem `pip install TTS`.
+# UWAGA: nowsze wersje transformers usunęły/przeniosły BeamSearchScorer,
+# od którego zależy stary kod generacji w TTS - stąd pin poniżej.
+# UWAGA: torch musi być < 2.6 - PyTorch 2.6 zmienił domyślną wartość
+# weights_only w torch.load na True, a stary TTS 0.22.0 tego nie obsługuje
+# (rzuca błąd "Weights only load failed"). Jeśli coś nadpisze torch nowszą
+# wersją, napraw komendą:
+#   pip install "torch<2.6" "torchaudio<2.6" --force-reinstall
+torch<2.6
+torchaudio<2.6
+
+transformers==4.36.2
+
+TTS>=0.22.0
+
+# Tkinter jest częścią standardowej biblioteki Pythona (nie wymaga pip install),
+# ale na niektórych dystrybucjach Linuksa trzeba doinstalować pakiet systemowy:
+#   Ubuntu/Debian: sudo apt install python3-tk
+#   Fedora:        sudo dnf install python3-tkinter
+
+# --- Aktualizacje / wersjonowanie ---
+packaging>=23.0

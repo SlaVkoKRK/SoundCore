@@ -1,0 +1,46 @@
+# Python / environments
+venv/
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+
+# Local secrets / machine config
+.env
+.env.*
+*.key
+*.pem
+*.token
+settings.local.json
+
+# Generated audio and private voice data
+output/*
+!output/.gitkeep
+voice_profiles/*
+!voice_profiles/.gitkeep
+
+# ML weights / indexes / logs - never publish accidentally
+*.pth
+*.pth.tar
+*.pt
+*.ckpt
+*.safetensors
+*.index
+*.onnx
+*.tflite
+runs/
+training_runs/
+wandb/
+
+# Release binary assets; channel metadata remains tracked
+dist/*.tar.gz
+dist/*.zip
+dist/*.sha256
+release_bundle/
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

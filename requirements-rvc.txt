@@ -1,0 +1,25 @@
+# Opcjonalne zależności dla modułu konwersji głosu RVC
+# (voice_engine/rvc_engine.py). Zainstaluj TYLKO jeśli chcesz używać
+# funkcji "Popraw barwę głosu przez RVC".
+#
+# Instalacja:
+#   pip install -r requirements-rvc.txt
+#
+# Uwaga (Python 3.11+): fairseq (zależność rvc-python) bywa niekompatybilny
+# z Python 3.11+. Jeśli masz Python 3.11 lub nowszy i instalacja się wywali
+# na fairseq, zainstaluj najpierw fork z GitHuba:
+#   pip install https://github.com/One-sixth/fairseq/archive/main.zip
+# a dopiero potem tę listę. Przy Python 3.10 (zalecana wersja w tym
+# projekcie) zwykle nie jest to potrzebne.
+#
+# Uwaga (GPU NVIDIA): domyślnie instaluje się wersja CPU torch/torchaudio.
+# Jeśli chcesz przyspieszenia GPU, po instalacji poniższego doinstaluj
+# odpowiednią wersję CUDA zgodnie z https://pytorch.org/get-started/locally/
+#
+# Uwaga (konflikty wersji): ten stos zależności (fairseq, faiss, torchcrepe,
+# pyworld) bywa równie kapryśny jak TTS. Jeśli pip zgłosi konflikt wersji
+# (podobnie jak wcześniej z numpy/scipy/torch dla TTS), instaluj pojedynczo
+# i sprawdzaj komunikaty błędów - zwykle chodzi o przypięcie jednej,
+# konkretnej wersji pakietu.
+
+rvc-python
