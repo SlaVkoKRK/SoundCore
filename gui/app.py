@@ -17,6 +17,7 @@ from preprocessing.audio_utils import preprocess_pipeline
 from recorder.recorder import DEFAULT_SAMPLERATE, list_input_devices, play_wav, record_audio
 from storage.profile_manager import ProfileManager
 from system.hardware import detect_hardware
+from system.cuda_manager import CudaRepairManager
 from training.dataset import add_sample, get_stats
 from training.manager import TrainingManager
 from updater.update_manager import check_for_update, download_update, launch_apply
@@ -26,7 +27,7 @@ from voice_engine.tts_engine import get_engine
 BASE_DIR = Path(__file__).resolve().parents[1]
 WEBUI_DIR = BASE_DIR / "webui"
 OUTPUT_DIR = BASE_DIR / "output"
-APP_VERSION = "0.3.0"
+APP_VERSION = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip() if (BASE_DIR / "VERSION").exists() else "0.3.1"
 CHANNEL_URL = "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/channel.json"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -37,6 +38,7 @@ class SoundCoreApi:
         self.engine = get_engine()
         self.rvc_engine = get_rvc_engine()
         self.training = TrainingManager(str(BASE_DIR))
+        self.cuda_repair = CudaRepairManager(BASE_DIR / "training_runtime")
         self.hardware = detect_hardware()
         self.window = None
         self.notifications: list[dict] = []
@@ -73,6 +75,7 @@ class SoundCoreApi:
             "notifications": self.notifications,
             "training": self.training.status(),
             "last_generated": self.last_generated,
+            "cuda_repair": self.cuda_repair.status(),
         }
 
     def refresh_hardware(self) -> dict:
@@ -170,6 +173,25 @@ class SoundCoreApi:
         if not self.last_generated or not os.path.isfile(self.last_generated):
             raise ValueError("Brak wygenerowanego pliku.")
         threading.Thread(target=lambda: play_wav(self.last_generated), daemon=True).start()
+        return {"ok": True}
+
+
+    def cuda_repair_status(self) -> dict:
+        return self.cuda_repair.status()
+
+    def install_cuda_runtime(self) -> dict:
+        self.hardware = detect_hardware()
+        if not self.hardware.gpu_detected:
+            raise RuntimeError("Nie wykryto karty NVIDIA. Instalacja PyTorch CUDA nie ma sensu.")
+        if self.hardware.torch_cuda_available:
+            return {"state": "completed", "progress": 100, "message": "CUDA jest już aktywna.", "restart_required": False}
+        status = self.cuda_repair.start()
+        self._notify("Naprawa CUDA", "Rozpoczęto instalację oficjalnego PyTorch 2.5.1 z CUDA 12.4. SoundCore może działać w tle podczas pobierania.", "info")
+        return status
+
+    def restart_app(self) -> dict:
+        subprocess.Popen([sys.executable, str(BASE_DIR / "main.py")], cwd=str(BASE_DIR), creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0))
+        threading.Timer(0.6, lambda: os._exit(0)).start()
         return {"ok": True}
 
     def start_training(self, profile_name: str, language: str, epochs: int, device: str, batch_size: int = 2) -> dict:
