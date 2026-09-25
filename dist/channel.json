@@ -1,7 +1,7 @@
 {
   "version": "0.2.0",
   "min_version": "0.2.0",
-  "sha256": "cc0ac90aa1881840572bd6369ab699c09886506a1a7868f8e9ec228d474c28dc",
+  "sha256": "ab7f33847fbfed870f30e7f4ac3a87be6fa138057273321cbd4c7ab3b9fdc446",
   "package_encoding": "tar.gz",
   "package_url": "https://github.com/SlaVkoKRK/SoundCore/releases/download/v0.2.0/soundcore_update.tar.gz",
   "sha256_url": "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/soundcore_update.tar.gz.sha256",
