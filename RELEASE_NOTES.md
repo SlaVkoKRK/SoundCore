@@ -1,7 +1,8 @@
-# SoundCore 0.4.8
+# SoundCore 0.4.9
 
-- duży timer nagrywania z odliczaniem 3-2-1 i paskiem postępu dla referencji i próbek treningowych
-- naprawa cache profili po zapisie/usunięciu/edycji/importowaniu próbki
-- licznik datasetu i biblioteka nagrań odświeżają się natychmiast po nagraniu
-- adaptacyjny eval split XTTS dla małych datasetów; minimum 3 próbki
-- usunięty techniczny błąd `eval_split_size` przy 3 próbkach
+## Nagrywanie / UX
+- Timer nagrywania pokazuje teraz pełny tekst do przeczytania pod dużym licznikiem.
+- Długi tekst ma własny przewijany panel i pozostaje widoczny przez całe nagranie.
+- Walidacja nazwy profilu odbywa się przed odliczaniem i uruchomieniem mikrofonu.
+- Walidacja tekstu referencji i próbki treningowej odbywa się przed nagrywaniem.
+- Brak wybranego profilu treningowego blokuje nagrywanie zanim pojawi się timer.

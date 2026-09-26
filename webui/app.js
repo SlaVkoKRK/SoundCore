@@ -45,10 +45,10 @@ async function pollStartup(){
 }
 
 function waitMs(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
-async function withRecordingTimer(durationSeconds,title,action){
-  const overlay=$('recordingTimerOverlay'),phase=$('recordingTimerPhase'),value=$('recordingTimerValue'),ttl=$('recordingTimerTitle'),bar=$('recordingTimerBar'),hint=$('recordingTimerHint');
+async function withRecordingTimer(durationSeconds,title,promptText,action){
+  const overlay=$('recordingTimerOverlay'),phase=$('recordingTimerPhase'),value=$('recordingTimerValue'),ttl=$('recordingTimerTitle'),bar=$('recordingTimerBar'),hint=$('recordingTimerHint'),prompt=$('recordingTimerPrompt');
   const duration=Math.max(1,Number(durationSeconds)||1);
-  overlay.classList.remove('hidden','is-recording','processing');ttl.textContent=title||'Nagrywanie';hint.textContent='Przygotuj się i zacznij czytać po odliczaniu.';bar.style.width='0%';
+  overlay.classList.remove('hidden','is-recording','processing');ttl.textContent=title||'Nagrywanie';hint.textContent='Przygotuj się i zacznij czytać po odliczaniu.';prompt.textContent=String(promptText||'').trim();bar.style.width='0%';
   for(let n=3;n>=1;n--){phase.textContent='PRZYGOTUJ SIĘ';value.textContent=String(n);await waitMs(1000)}
   overlay.classList.add('is-recording');phase.textContent='● NAGRYWANIE';ttl.textContent=title||'Nagrywanie w toku';hint.textContent='Czytaj tekst naturalnie. Nie zamykaj okna.';
   const started=performance.now(); let timer=null;
@@ -168,20 +168,28 @@ function wire(){
 
   $('recordProfileBtn').onclick=async()=>{
     const b=$('recordProfileBtn');
+    const profileName=$('newProfileName').value.trim();
+    const readingText=$('profileReadingText').value.trim();
+    if(!profileName){$('recordProfileStatus').textContent='Najpierw wpisz nazwę profilu.';toast('Profil','Najpierw wpisz nazwę profilu.','error');$('newProfileName').focus();return}
+    if(!readingText){$('recordProfileStatus').textContent='Brak tekstu do przeczytania.';toast('Nagrywanie','Wygeneruj lub wpisz tekst do przeczytania.','error');$('profileReadingText').focus();return}
     try{
-      b.disabled=true;$('recordProfileStatus').textContent='Nagrywanie w toku… czytaj pokazany tekst.';
+      b.disabled=true;$('recordProfileStatus').textContent='Nagrywanie w toku… czytaj tekst z okna nagrywania.';
       const duration=Number($('profileDuration').value);
-      const r=await withRecordingTimer(duration,'Nagranie referencyjne',()=>api('record_profile',$('newProfileName').value,duration,Number($('profileDevice').value),$('profileReadingText').value));
+      const r=await withRecordingTimer(duration,'Nagranie referencyjne',readingText,()=>api('record_profile',profileName,duration,Number($('profileDevice').value),readingText));
       state.profiles=r.profiles;renderProfiles();$('recordProfileStatus').textContent=`Profil ${r.profile} zapisany.`;toast('Profil gotowy',r.profile,'success');
     }catch(e){$('recordProfileStatus').textContent=e.message;toast('Nagrywanie',e.message,'error')}finally{b.disabled=false}
   };
 
   $('createProfileInTraining').onclick=async()=>{
     const b=$('createProfileInTraining');
+    const profileName=$('trainNewProfileName').value.trim();
+    const readingText=$('trainProfileReadingText').value.trim();
+    if(!profileName){$('trainProfileCreateStatus').textContent='Najpierw wpisz nazwę profilu.';toast('Profil','Najpierw wpisz nazwę profilu.','error');$('trainNewProfileName').focus();return}
+    if(!readingText){$('trainProfileCreateStatus').textContent='Brak tekstu do przeczytania.';toast('Nagrywanie','Wygeneruj lub wpisz tekst do przeczytania.','error');$('trainProfileReadingText').focus();return}
     try{
-      b.disabled=true;$('trainProfileCreateStatus').textContent='Nagrywanie referencji… czytaj pokazany tekst.';
+      b.disabled=true;$('trainProfileCreateStatus').textContent='Nagrywanie referencji… czytaj tekst z okna nagrywania.';
       const duration=Number($('trainProfileDuration').value);
-      const r=await withRecordingTimer(duration,'Nagranie referencyjne',()=>api('record_profile',$('trainNewProfileName').value,duration,Number($('trainProfileDevice').value),$('trainProfileReadingText').value));
+      const r=await withRecordingTimer(duration,'Nagranie referencyjne',readingText,()=>api('record_profile',profileName,duration,Number($('trainProfileDevice').value),readingText));
       state.profiles=r.profiles;renderProfiles();
       $('trainProfile').value=r.profile;updateDatasetStats();
       $('trainProfileCreateStatus').textContent=`Profil ${r.profile} utworzony i wybrany do treningu.`;
@@ -191,11 +199,14 @@ function wire(){
 
   $('recordTrainingSample').onclick=async()=>{
     const b=$('recordTrainingSample');
+    const profileName=$('trainProfile').value.trim();
+    const readingText=$('trainingSentence').value.trim();
+    if(!profileName){$('sampleStatus').textContent='Najpierw wybierz profil głosu.';toast('Dataset','Najpierw wybierz profil głosu.','error');return}
+    if(!readingText){$('sampleStatus').textContent='Brak tekstu próbki.';toast('Dataset','Wygeneruj lub wpisz tekst próbki przed nagrywaniem.','error');$('trainingSentence').focus();return}
     try{
-      b.disabled=true;$('sampleStatus').textContent='Nagrywanie próbki… czytaj pokazany tekst.';
+      b.disabled=true;$('sampleStatus').textContent='Nagrywanie próbki… czytaj tekst z okna nagrywania.';
       const duration=Number($('trainingDuration').value);
-      const profileName=$('trainProfile').value;
-      const r=await withRecordingTimer(duration,'Próbka treningowa',()=>api('record_training_sample',profileName,$('trainingSentence').value,duration,Number($('trainDevice').value)));
+      const r=await withRecordingTimer(duration,'Próbka treningowa',readingText,()=>api('record_training_sample',profileName,readingText,duration,Number($('trainDevice').value)));
       $('sampleStatus').textContent=`Dodano ${r.sample.id}. Dataset: ${r.dataset.samples} próbek / ${r.dataset.duration_minutes} min.`;
       if(r.profiles)state.profiles=r.profiles;else await refreshState();
       renderProfiles();
