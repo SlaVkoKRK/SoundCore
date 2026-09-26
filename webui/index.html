@@ -17,6 +17,7 @@
     <nav class="nav">
       <button class="nav-item active" data-page="dashboard"><span class="nav-icon">⌂</span><span>Pulpit</span></button>
       <button class="nav-item" data-page="synthesis"><span class="nav-icon">∿</span><span>Synteza mowy</span></button>
+      <button class="nav-item" data-page="music"><span class="nav-icon">♫</span><span>Muzyka / Piosenki</span></button>
       <button class="nav-item" data-page="profiles"><span class="nav-icon">◯</span><span>Profile głosu</span></button>
       <button class="nav-item" data-page="training"><span class="nav-icon">◎</span><span>Trening modelu</span></button>
       <button class="nav-item" data-page="updates"><span class="nav-icon">⇩</span><span>Aktualizacje</span></button>
@@ -173,8 +174,57 @@
       </div>
     </section>
 
+
+    <section id="page-music" class="page">
+      <div class="music-studio-grid">
+        <aside class="card music-projects-card">
+          <div class="card-head"><div><span class="eyebrow violet">SONG STUDIO</span><h2>Projekty</h2><p>Pełne projekty utworów zapisane lokalnie.</p></div><button id="newSongProject" class="btn btn-gradient small">＋ Nowy</button></div>
+          <div id="songProjectList" class="song-project-list"><div class="status-box">Brak projektów.</div></div>
+        </aside>
+        <div class="music-main-column">
+          <article class="card song-composer-card">
+            <div class="card-head"><div><span class="eyebrow blue">KOMPOZYTOR</span><h2 id="songProjectHeading">Nowa piosenka</h2><p>Struktura, tekst, harmonia i parametry generacji w jednym miejscu.</p></div><span id="musicEngineBadge" class="status-pill neutral">DIFFRHYTHM</span></div>
+            <div class="form-grid song-meta-grid">
+              <label><span>Tytuł</span><input id="songTitle" placeholder="Tytuł utworu"/></label>
+              <label><span>Język</span><select id="songLanguage"><option value="pl">Polski</option><option value="en">English</option></select></label>
+              <label><span>Długość</span><select id="songDuration"><option value="95">1:35 · Base</option><option value="120">2:00</option><option value="180">3:00</option><option value="240">4:00</option><option value="285">4:45 · Full</option></select></label>
+              <label><span>BPM</span><input id="songBpm" type="number" min="50" max="220" value="100"/></label>
+              <label><span>Tonacja</span><input id="songKey" value="C minor"/></label>
+              <label><span>Metrum</span><select id="songMeter"><option>4/4</option><option>3/4</option><option>6/8</option><option>5/4</option></select></label>
+            </div>
+            <label class="reading-block"><span>Styl / produkcja</span><textarea id="songStyle" class="song-style-editor" placeholder="np. cinematic synth-pop, emotional male vocal, analog drums, wide stereo...">modern pop, emotional, wide stereo, polished production</textarea></label>
+            <div class="song-editors-grid">
+              <label class="reading-block"><span>Tekst i struktura <small>[Verse], [Chorus], [Bridge]...</small></span><textarea id="songLyrics" class="song-lyrics-editor"></textarea></label>
+              <label class="reading-block"><span>Akordy / harmonia <small>dodawane także do promptu</small></span><textarea id="songChords" class="song-chords-editor">Verse: Cm - Ab - Eb - Bb
+Chorus: Ab - Eb - Bb - Cm</textarea></label>
+            </div>
+            <div class="song-options-row">
+              <label class="check"><input id="songLowVram" type="checkbox" checked/><span>Low‑VRAM / chunked</span></label>
+              <label class="check"><input id="songInstrumental" type="checkbox"/><span>Instrumental</span></label>
+              <label><span>Profil głosu (metadata)</span><select id="songProfile"></select></label>
+            </div>
+            <div class="song-advanced-box">
+              <div class="card-head compact"><div><span class="eyebrow violet">ADVANCED</span><h3>Referencja i edycja fragmentów</h3></div></div>
+              <div class="form-grid song-meta-grid">
+                <label><span>Audio referencyjne stylu</span><div class="inline-path"><input id="songStyleRef" readonly placeholder="brak — użyjemy promptu stylu"/><button id="pickSongStyleRef" class="btn btn-soft small">Wybierz</button></div></label>
+                <label class="check"><input id="songEditMode" type="checkbox"/><span>Edytuj / regeneruj fragment istniejącego utworu</span></label>
+                <label><span>Utwór do edycji</span><div class="inline-path"><input id="songEditRef" readonly placeholder="brak"/><button id="pickSongEditRef" class="btn btn-soft small">Wybierz</button></div></label>
+                <label><span>Segmenty edycji (sekundy)</span><input id="songEditSegments" value="[[20,40]]" placeholder="[[20,40],[70,90]]"/></label>
+              </div>
+            </div>
+            <div class="action-row"><button id="saveSongProject" class="btn btn-soft">Zapisz projekt</button><button id="previewSongLrc" class="btn btn-soft">Podgląd timeline LRC</button><button id="generateSong" class="btn btn-gradient">♫ Generuj piosenkę</button><button id="stopSongGeneration" class="btn btn-danger-outline hidden">■ STOP</button></div>
+            <div id="songStatus" class="status-box">Gotowy. Pierwszy render może pobierać kilka GB modeli.</div>
+            <div class="progress large"><span id="songProgressBar"></span></div>
+          </article>
+          <article class="card music-engine-card"><div class="card-head"><div><span class="eyebrow green">SILNIK</span><h2>DiffRhythm</h2><p>Lokalny generator pełnych piosenek z tekstem. Na RTX 4050 używaj Low‑VRAM.</p></div><button id="refreshMusicEngine" class="btn btn-soft small">↻ Odśwież</button></div><div id="musicEngineStatus" class="status-box">Sprawdzanie silnika…</div><div class="action-row"><button id="installMusicEngine" class="btn btn-dark">Zainstaluj DiffRhythm</button></div><pre id="songEngineLog" class="training-log song-log">Brak logów.</pre></article>
+          <article class="card song-timeline-card"><div class="card-head"><div><span class="eyebrow blue">TIMELINE</span><h2>Plan wokalu / LRC</h2><p>SoundCore automatycznie rozmieszcza linie tekstu w czasie; możesz to skopiować i dopracować ręcznie.</p></div></div><pre id="songLrcPreview" class="song-lrc-preview">Kliknij „Podgląd timeline LRC”.</pre></article>
+          <article class="card song-renders-card"><div class="card-head"><div><span class="eyebrow green">RENDERY</span><h2>Biblioteka piosenki</h2><p>Każda wygenerowana wersja zostaje w projekcie.</p></div></div><div id="songRenderList" class="song-render-list"><div class="status-box">Brak renderów.</div></div></article>
+        </div>
+      </div>
+    </section>
+
     <section id="page-updates" class="page">
-      <div class="page-grid updates-layout"><article class="card"><div class="card-head"><div><span class="eyebrow green">GITHUB UPDATE CHANNEL</span><h2>Aktualizacje SoundCore</h2><p>Weryfikacja SHA256 i bezpieczna instalacja bez utraty profili.</p></div></div><div class="version-hero"><div><span>Aktualna wersja</span><b id="updatesCurrent">v—</b></div><div class="arrow">→</div><div><span>Najnowsza wersja</span><b id="updatesLatest">—</b></div></div><div class="action-row"><button id="checkUpdates" class="btn btn-soft">↻ Sprawdź aktualizacje</button><button id="installUpdate" class="btn btn-gradient" disabled>⇩ Pobierz i zainstaluj</button></div><div id="updateStatus" class="status-box">Nie sprawdzono jeszcze kanału aktualizacji.</div></article><article class="card"><div class="card-head"><div><h2>Bezpieczna aktualizacja</h2><p>Co pozostaje nietknięte.</p></div></div><ul class="safe-list"><li>✓ voice_profiles</li><li>✓ output</li><li>✓ venv / .venv</li><li>✓ .git</li><li>✓ lokalne modele i datasety</li></ul></article></div>
+      <div class="page-grid updates-layout"><article class="card"><div class="card-head"><div><span class="eyebrow green">GITHUB UPDATE CHANNEL</span><h2>Aktualizacje SoundCore</h2><p>Weryfikacja SHA256 i bezpieczna instalacja bez utraty profili.</p></div></div><div class="version-hero"><div><span>Aktualna wersja</span><b id="updatesCurrent">v—</b></div><div class="arrow">→</div><div><span>Najnowsza wersja</span><b id="updatesLatest">—</b></div></div><div class="action-row"><button id="checkUpdates" class="btn btn-soft">↻ Sprawdź aktualizacje</button><button id="installUpdate" class="btn btn-gradient" disabled>⇩ Pobierz i zainstaluj</button></div><div id="updateStatus" class="status-box">Nie sprawdzono jeszcze kanału aktualizacji.</div></article><article class="card"><div class="card-head"><div><h2>Bezpieczna aktualizacja</h2><p>Co pozostaje nietknięte.</p></div></div><ul class="safe-list"><li>✓ voice_profiles</li><li>✓ output</li><li>✓ songs / projekty muzyczne</li><li>✓ venv / .venv</li><li>✓ .git</li><li>✓ lokalne modele i datasety</li></ul></article></div>
     </section>
 
     <section id="page-settings" class="page">

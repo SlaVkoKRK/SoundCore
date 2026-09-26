@@ -24,6 +24,7 @@ from system.windows_integration import prepare_windows_process, setup_windows_sh
 from training.manager import TrainingManager
 from updater.update_manager import UpdateCancelled, check_for_update, download_update, launch_apply
 from voice_engine.external_engines import ExternalEngineManager
+from music.song_manager import SongManager
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 WEBUI_DIR = BASE_DIR / "webui"
@@ -74,6 +75,7 @@ class SoundCoreApi:
         self._engine = None
         self._rvc_engine = None
         self._external_engines = ExternalEngineManager(BASE_DIR)
+        self._songs = SongManager(BASE_DIR)
         self._rvc_install_status: dict = {"state": "idle", "progress": 0, "message": "RVC nie jest instalowane."}
         self._hardware: dict = _load_hardware_cache()
         self._devices: list[dict] = []
@@ -824,6 +826,80 @@ class SoundCoreApi:
             self._update_install_status = {"state": "cancelling", "progress": self._update_install_status.get("progress", 0), "message": "Przerywanie aktualizacji…"}
         return self.update_install_status()
 
+    # ------------------------------- Song Studio -------------------------------
+    def song_projects(self) -> dict:
+        return {"ok": True, "projects": self._songs.list_projects()}
+
+    def new_song_project(self, title: str = "Nowa piosenka") -> dict:
+        project = self._songs.new_project(title)
+        return {"ok": True, "project": project, "projects": self._songs.list_projects()}
+
+    def get_song_project(self, project_id: str) -> dict:
+        return {"ok": True, "project": self._songs.get_project(project_id)}
+
+    def save_song_project(self, project: dict) -> dict:
+        return self._songs.save_project(project)
+
+    def delete_song_project(self, project_id: str) -> dict:
+        return self._songs.delete_project(project_id)
+
+    def song_lrc_preview(self, project: dict) -> dict:
+        return self._songs.lrc_preview(project)
+
+    def music_engine_status(self) -> dict:
+        return self._songs.engine_status()
+
+    def install_music_engine(self) -> dict:
+        return self._songs.install_engine()
+
+    def music_engine_install_status(self) -> dict:
+        return self._songs.install_status()
+
+    def select_song_audio_file(self) -> dict:
+        win = webview.active_window()
+        if win is None:
+            raise RuntimeError("Okno SoundCore nie jest gotowe.")
+        dialog_open = getattr(webview.FileDialog, "OPEN", None) or getattr(webview.FileDialog, "LOAD")
+        selected = win.create_file_dialog(dialog_open, allow_multiple=False, file_types=("Audio (*.wav;*.mp3;*.flac;*.m4a;*.ogg)", "Wszystkie pliki (*.*)"))
+        if not selected:
+            return {"ok": False, "cancelled": True}
+        path = selected[0] if isinstance(selected, (list, tuple)) else selected
+        return {"ok": True, "path": str(path)}
+
+    def start_song_generation(self, project: dict) -> dict:
+        return self._songs.start_generation(project)
+
+    def song_generation_status(self) -> dict:
+        return self._songs.generation_status()
+
+    def cancel_song_generation(self) -> dict:
+        return self._songs.cancel_generation()
+
+    def play_song_render(self, path: str) -> dict:
+        target = Path(path)
+        if not target.is_file() or self._songs.projects_dir not in target.resolve().parents:
+            raise ValueError("Nieprawidłowy plik renderu.")
+        from recorder.recorder import play_wav
+        threading.Thread(target=lambda: play_wav(str(target)), daemon=True).start()
+        return {"ok": True}
+
+    def export_song_render(self, path: str) -> dict:
+        source = Path(path)
+        if not source.is_file() or self._songs.projects_dir not in source.resolve().parents:
+            raise ValueError("Nieprawidłowy plik renderu.")
+        win = webview.active_window()
+        if win is None:
+            raise RuntimeError("Okno SoundCore nie jest gotowe.")
+        dialog_save = getattr(webview.FileDialog, "SAVE", None)
+        if dialog_save is None:
+            raise RuntimeError("Ta wersja pywebview nie obsługuje dialogu zapisu.")
+        chosen = win.create_file_dialog(dialog_save, save_filename=source.name, file_types=("WAV (*.wav)",))
+        if not chosen:
+            return {"ok": False, "cancelled": True}
+        dest = Path(chosen if isinstance(chosen, str) else chosen[0])
+        shutil.copy2(source, dest)
+        return {"ok": True, "path": str(dest)}
+
     def cancel_recording(self) -> dict:
         from recorder.recorder import cancel_recording
         cancel_recording()
@@ -897,6 +973,21 @@ def run() -> None:
         api.install_update,
         api.update_install_status,
         api.cancel_update,
+        api.song_projects,
+        api.new_song_project,
+        api.get_song_project,
+        api.save_song_project,
+        api.delete_song_project,
+        api.song_lrc_preview,
+        api.music_engine_status,
+        api.install_music_engine,
+        api.music_engine_install_status,
+        api.select_song_audio_file,
+        api.start_song_generation,
+        api.song_generation_status,
+        api.cancel_song_generation,
+        api.play_song_render,
+        api.export_song_render,
         api.cancel_recording,
     )
     setup_windows_shell_async(BASE_DIR, APP_ICON)
