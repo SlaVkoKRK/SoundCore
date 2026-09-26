@@ -1,3 +1,8 @@
+# SoundCore 0.5.3
+
+- Naprawiono ładowanie fine-tunowanego XTTS w Coqui TTS 0.22.0: `load_checkpoint()` dostaje teraz również `checkpoint_dir`, co omija błąd `os.path.join(None, "speakers_xtts.pth")`.
+- Zachowano wszystkie poprawki 0.5.2 dotyczące aktywnego modelu, updatera i obsługi `Esc`.
+
 # SoundCore 0.5.2
 
 - Naprawiono ładowanie aktywnego fine-tunowanego XTTS: przed `Xtts.init_from_config()` SoundCore odnajduje lokalny katalog `XTTS_v2_original_model_files` i uzupełnia brakujące/stare ścieżki `dvae.pth`, `mel_stats.pth`, `vocab.json` i `model.pth`.

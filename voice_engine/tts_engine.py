@@ -157,8 +157,15 @@ class VoiceEngine:
                     vocab_path = str(base_assets / "vocab.json")
                     model = Xtts.init_from_config(config)
                     try:
+                        # Coqui TTS 0.22.0 has a bug when checkpoint_path is
+                        # supplied without checkpoint_dir: it still tries to build
+                        # speakers_xtts.pth with os.path.join(checkpoint_dir, ...),
+                        # which crashes when checkpoint_dir is None. Always provide
+                        # the checkpoint directory explicitly.
+                        checkpoint_dir = str(Path(checkpoint_path).resolve().parent)
                         model.load_checkpoint(
                             config,
+                            checkpoint_dir=checkpoint_dir,
                             checkpoint_path=checkpoint_path,
                             vocab_path=vocab_path,
                             use_deepspeed=False,
