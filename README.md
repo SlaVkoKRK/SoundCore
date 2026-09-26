@@ -321,3 +321,7 @@ Wersja 0.5.2 poprawia ładowanie wytrenowanych modeli XTTS i zachowanie długich
 ### Studio Syntezy i A/B (0.5.4)
 
 Studio Syntezy jest pełnym panelem generowania: wybór modelu (aktywny/bazowy/wytrenowany), stylu, tempa i RVC. Test A/B zapisuje obie wersje do Historii syntezy, gdzie można je odsłuchać, wyeksportować do WAV lub usunąć. Nagrania mikrofonowe mają inteligentne zakończenie po ciszy, a inference wytrenowanego XTTS dzieli dłuższy tekst na zdania.
+
+
+## SoundCore 0.7.1
+Hotfix kompatybilności Python 3.10: naprawa startu modułu Song Studio po 0.7.0.

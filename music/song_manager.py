@@ -328,7 +328,8 @@ class SongManager:
                 src = render_dir / "output.wav"
                 if not src.exists():
                     raise RuntimeError("DiffRhythm nie utworzył output.wav.")
-                final = project_dir / "renders" / f"{stamp}_{re.sub(r'[^\w-]+','_', project.get('title','song'))[:40]}.wav"
+                safe_title = re.sub(r"[^\w-]+", "_", str(project.get("title") or "song"))[:40].strip("_") or "song"
+                final = project_dir / "renders" / f"{stamp}_{safe_title}.wav"
                 shutil.move(str(src), str(final))
                 meta = {
                     "title": project.get("title"), "engine": "DiffRhythm", "style": style,

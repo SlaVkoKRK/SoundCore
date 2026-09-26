@@ -1,3 +1,11 @@
+# SoundCore 0.7.1
+
+Hotfix uruchamiania na Pythonie 3.10.
+
+- naprawiono SyntaxError w `music/song_manager.py` powodujący brak startu SoundCore 0.7.0,
+- usunięto regex z wyrażenia wewnątrz f-stringa; nazwa renderu piosenki jest teraz wyliczana wcześniej,
+- zachowano wszystkie funkcje 0.7.0 bez zmian.
+
 # SoundCore 0.7.0
 
 ## Naprawione: nagrania profilu
