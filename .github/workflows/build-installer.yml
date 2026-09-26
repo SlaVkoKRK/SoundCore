@@ -33,8 +33,8 @@ jobs:
           $v = (Get-Content VERSION -Raw).Trim()
           if ($v -ne "${{ steps.version.outputs.version }}") { throw "VERSION mismatch" }
           $bootstrap = Get-Content installer\bootstrap.ps1 -Raw
-          if ($bootstrap -match '\\$Label:') { throw "bootstrap.ps1 still contains invalid PowerShell interpolation `$Label:`" }
-          if ($bootstrap -notmatch '\\$\{Label\}:') { throw "bootstrap.ps1 missing fixed `${Label}:` interpolation" }
+          if (-not $bootstrap.Contains('${Label}:')) { throw 'bootstrap.ps1 is missing the fixed label interpolation.' }
+          if (-not (Test-Path 'installer\SoundCore.iss')) { throw 'installer\SoundCore.iss not found.' }
           Write-Host "Installer sources validated for $v"
 
       - name: Build installer

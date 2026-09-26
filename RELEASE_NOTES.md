@@ -1,8 +1,10 @@
-# SoundCore 0.4.2
+# SoundCore 0.4.3
 
-## Installer hotfix
+## Windows installer pipeline hotfix
 
-- Fixed a PowerShell parser error in `installer/bootstrap.ps1` that prevented the bootstrap script from starting at all (`$Label:` -> `${Label}:`).
-- Added installer-side `setup-bootstrap.log`, created before PowerShell starts, so bootstrap launch failures are always diagnosable.
-- Installer still validates `venv\\Scripts\\python.exe`, `pythonw.exe`, and `.installed` before creating working launch shortcuts.
-- Existing Fast Start, updater, profile library, media trimming, CUDA repair and training features are unchanged.
+- Fixed the GitHub Actions validation step that prevented the Windows installer from being compiled.
+- The validator no longer contains PowerShell interpolation that causes a parser error.
+- The workflow now verifies `bootstrap.ps1` and `SoundCore.iss`, then continues to Inno Setup compilation.
+- The generated `SoundCore-Setup-0.4.3.exe` is uploaded as a workflow artifact and attached to the GitHub Release.
+
+Application functionality is unchanged from 0.4.2.
