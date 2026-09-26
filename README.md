@@ -279,3 +279,7 @@ Official releases can include `SoundCore-Setup-<version>.exe`. The installer cre
 ## Windows installer diagnostics
 
 SoundCore 0.4.2+ creates `setup-bootstrap.log` before launching the environment bootstrap and `install.log` once PowerShell starts. If installation fails before `install.log` exists, inspect `setup-bootstrap.log` in the selected installation directory.
+
+
+## 0.4.5 installer fix
+The Windows installer bootstrap now uses collision-free PowerShell argument handling for venv, pip, PyTorch and runtime verification commands.

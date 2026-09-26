@@ -34,6 +34,9 @@ jobs:
           if ($v -ne "${{ steps.version.outputs.version }}") { throw "VERSION mismatch" }
           $bootstrap = Get-Content installer\bootstrap.ps1 -Raw
           if (-not $bootstrap.Contains('${Label}:')) { throw 'bootstrap.ps1 is missing the fixed label interpolation.' }
+          if ($bootstrap.Contains('[string[]]$Args')) { throw 'bootstrap.ps1 uses reserved automatic variable $args as a parameter.' }
+          if (-not $bootstrap.Contains('[string[]]$Arguments')) { throw 'bootstrap.ps1 is missing the safe $Arguments parameter.' }
+          if (-not $bootstrap.Contains("Run -Exe `$python -Arguments @('-m','venv',`$venv)")) { throw 'bootstrap.ps1 venv invocation is not using explicit -Arguments.' }
           if (-not (Test-Path 'installer\SoundCore.iss')) { throw 'installer\SoundCore.iss not found.' }
           Write-Host "Installer sources validated for $v"
 

@@ -12,27 +12,38 @@ function Log([string]$Message) {
     Add-Content -Path $LogFile -Value $line -Encoding UTF8
 }
 
-function Run([string]$Exe, [string[]]$Args, [string]$Label) {
-    Log "${Label}: $Exe $($Args -join ' ')"
+function Run([string]$Exe, [string[]]$Arguments, [string]$Label) {
+    $safeArguments = @()
+    foreach ($item in @($Arguments)) {
+        if ($null -ne $item) {
+            $safeArguments += [string]$item
+        }
+    }
+
+    Log "${Label}: $Exe $($safeArguments -join ' ')"
     if (-not (Test-Path $Exe) -and -not (Get-Command $Exe -ErrorAction SilentlyContinue)) {
         throw "$Label failed: executable not found: $Exe"
     }
-    $stdout = Join-Path $env:TEMP ("soundcore_" + [guid]::NewGuid().ToString('N') + '.out.log')
-    $stderr = Join-Path $env:TEMP ("soundcore_" + [guid]::NewGuid().ToString('N') + '.err.log')
+
+    $previousErrorAction = $ErrorActionPreference
     try {
-        $p = Start-Process -FilePath $Exe -ArgumentList $Args -Wait -PassThru -WindowStyle Hidden -RedirectStandardOutput $stdout -RedirectStandardError $stderr
-        if (Test-Path $stdout) {
-            Get-Content $stdout -ErrorAction SilentlyContinue | ForEach-Object { if ($_){ Log "  $_" } }
+        # Invoke the native executable directly instead of Start-Process -ArgumentList.
+        # This preserves the argument array exactly (including paths with spaces) and
+        # avoids the PowerShell automatic $args variable collision that broke 0.4.4.
+        $ErrorActionPreference = 'Continue'
+        & $Exe @safeArguments 2>&1 | ForEach-Object {
+            if ($null -ne $_) {
+                Log ("  " + $_.ToString())
+            }
         }
-        if (Test-Path $stderr) {
-            Get-Content $stderr -ErrorAction SilentlyContinue | ForEach-Object { if ($_){ Log "  $_" } }
-        }
-        if ($p.ExitCode -ne 0) {
-            throw "$Label failed with exit code $($p.ExitCode)."
-        }
+        $exitCode = $LASTEXITCODE
     }
     finally {
-        Remove-Item $stdout,$stderr -Force -ErrorAction SilentlyContinue
+        $ErrorActionPreference = $previousErrorAction
+    }
+
+    if ($exitCode -ne 0) {
+        throw "$Label failed with exit code $exitCode."
     }
 }
 
@@ -82,7 +93,7 @@ try {
         Log 'Python 3.10 not found. Installing Python 3.10.11 for current user.'
         $pythonInstaller = Join-Path $env:TEMP 'python-3.10.11-amd64.exe'
         Invoke-WebRequest -UseBasicParsing -Uri 'https://www.python.org/ftp/python/3.10.11/python-3.10.11-amd64.exe' -OutFile $pythonInstaller
-        Run $pythonInstaller @('/quiet','InstallAllUsers=0','PrependPath=0','Include_test=0','Include_launcher=1','Include_pip=1') 'Python installation'
+        Run -Exe $pythonInstaller -Arguments @('/quiet','InstallAllUsers=0','PrependPath=0','Include_test=0','Include_launcher=1','Include_pip=1') -Label 'Python installation'
         Remove-Item $pythonInstaller -Force -ErrorAction SilentlyContinue
         $python = Find-Python310
     }
@@ -94,22 +105,22 @@ try {
     $venvPythonw = Join-Path $venv 'Scripts\pythonw.exe'
     if (-not (Test-Path $venvPython)) {
         Log "Creating venv: $venv"
-        Run $python @('-m','venv',$venv) 'Virtual environment creation'
+        Run -Exe $python -Arguments @('-m','venv',$venv) -Label 'Virtual environment creation'
     }
     if (-not (Test-Path $venvPython)) { throw "venv python.exe missing after creation: $venvPython" }
     if (-not (Test-Path $venvPythonw)) { throw "venv pythonw.exe missing after creation: $venvPythonw" }
 
-    Run $venvPython @('-m','pip','install','--upgrade','pip','wheel','setuptools<81') 'Pip bootstrap'
+    Run -Exe $venvPython -Arguments @('-m','pip','install','--upgrade','pip','wheel','setuptools<81') -Label 'Pip bootstrap'
 
     $nvidia = Get-Command nvidia-smi.exe -ErrorAction SilentlyContinue
     if ($nvidia) {
         Log 'NVIDIA GPU detected. Installing PyTorch 2.5.1 CUDA 12.4 build.'
         try {
-            Run $venvPython @('-m','pip','install','--no-deps','torch==2.5.1+cu124','torchvision==0.20.1+cu124','torchaudio==2.5.1+cu124','--index-url','https://download.pytorch.org/whl/cu124') 'PyTorch CUDA installation'
+            Run -Exe $venvPython -Arguments @('-m','pip','install','--no-deps','torch==2.5.1+cu124','torchvision==0.20.1+cu124','torchaudio==2.5.1+cu124','--index-url','https://download.pytorch.org/whl/cu124') -Label 'PyTorch CUDA installation'
         } catch {
             Log "CUDA PyTorch install warning: $($_.Exception.Message)"
             Log 'Falling back to CPU PyTorch. CUDA can be repaired later from SoundCore.'
-            Run $venvPython @('-m','pip','install','torch==2.5.1','torchaudio==2.5.1') 'PyTorch CPU fallback'
+            Run -Exe $venvPython -Arguments @('-m','pip','install','torch==2.5.1','torchaudio==2.5.1') -Label 'PyTorch CPU fallback'
         }
     } else {
         Log 'No NVIDIA GPU detected. requirements.txt will provide compatible PyTorch dependencies.'
@@ -117,10 +128,10 @@ try {
 
     $requirements = Join-Path $AppDir 'requirements.txt'
     if (-not (Test-Path $requirements)) { throw "requirements.txt not found: $requirements" }
-    Run $venvPython @('-m','pip','install','-r',$requirements) 'SoundCore dependencies'
+    Run -Exe $venvPython -Arguments @('-m','pip','install','-r',$requirements) -Label 'SoundCore dependencies'
 
-    Run $venvPython @('-m','pip','install','--force-reinstall','numpy==1.22.0','scipy==1.10.1') 'NumPy/SciPy compatibility fix'
-    Run $venvPython @('-c','import numpy, scipy, torch, webview, TTS; print("SoundCore runtime OK"); print("numpy", numpy.__version__); print("scipy", scipy.__version__); print("torch", torch.__version__); print("cuda", torch.cuda.is_available())') 'Runtime verification'
+    Run -Exe $venvPython -Arguments @('-m','pip','install','--force-reinstall','numpy==1.22.0','scipy==1.10.1') -Label 'NumPy/SciPy compatibility fix'
+    Run -Exe $venvPython -Arguments @('-c','import numpy, scipy, torch, webview, TTS; print("SoundCore runtime OK"); print("numpy", numpy.__version__); print("scipy", scipy.__version__); print("torch", torch.__version__); print("cuda", torch.cuda.is_available())') -Label 'Runtime verification'
 
     if (-not (Test-Path $venvPythonw)) { throw "Final validation failed: $venvPythonw does not exist." }
     Set-Content -Path (Join-Path $AppDir '.installed') -Value (Get-Date -Format o) -Encoding ASCII
