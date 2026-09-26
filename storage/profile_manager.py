@@ -24,6 +24,7 @@ import re
 import shutil
 from dataclasses import dataclass, asdict
 from datetime import datetime
+from pathlib import Path
 from typing import Optional
 
 BASE_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "voice_profiles")
@@ -37,6 +38,11 @@ class VoiceProfile:
     samplerate: int
     rvc_model_path: Optional[str] = None
     rvc_index_path: Optional[str] = None
+    xtts_mode: str = "base"
+    xtts_checkpoint_path: Optional[str] = None
+    xtts_config_path: Optional[str] = None
+    xtts_vocab_path: Optional[str] = None
+    xtts_trained_at: Optional[str] = None
 
     @property
     def folder(self) -> str:
@@ -141,6 +147,59 @@ class ProfileManager:
         with open(metadata_path, "w", encoding="utf-8") as f:
             json.dump(asdict(profile), f, ensure_ascii=False, indent=2)
 
+        return profile
+
+
+    def find_trained_xtts(self, name: str) -> Optional[dict]:
+        """Find the newest usable XTTS GPTTrainer checkpoint for a profile."""
+        profile = self.get_profile(name)
+        if profile is None:
+            return None
+        root = Path(profile.folder) / "model" / "xtts_gpt"
+        if not root.exists():
+            return None
+        candidates = list(root.rglob("best_model.pth"))
+        if not candidates:
+            candidates = list(root.rglob("checkpoint_*.pth")) + list(root.rglob("*.pth"))
+            candidates = [x for x in candidates if x.name not in {"dvae.pth", "mel_stats.pth", "model.pth"}]
+        if not candidates:
+            return None
+        checkpoint = max(candidates, key=lambda x: x.stat().st_mtime)
+        config_candidates = list(checkpoint.parent.glob("config.json")) or list(root.rglob("config.json"))
+        if not config_candidates:
+            return None
+        config = max(config_candidates, key=lambda x: x.stat().st_mtime)
+        vocab_candidates = list(root.rglob("vocab.json"))
+        if not vocab_candidates:
+            return None
+        vocab = max(vocab_candidates, key=lambda x: x.stat().st_mtime)
+        return {
+            "checkpoint_path": str(checkpoint),
+            "config_path": str(config),
+            "vocab_path": str(vocab),
+            "trained_at": datetime.fromtimestamp(checkpoint.stat().st_mtime).isoformat(timespec="seconds"),
+            "checkpoint_name": checkpoint.name,
+        }
+
+    def set_xtts_mode(self, name: str, mode: str) -> VoiceProfile:
+        profile = self.get_profile(name)
+        if profile is None:
+            raise ValueError(f"Nie znaleziono profilu '{name}'.")
+        mode = (mode or "base").lower()
+        if mode not in {"base", "trained"}:
+            raise ValueError("Nieprawidłowy tryb XTTS.")
+        if mode == "trained":
+            info = self.find_trained_xtts(name)
+            if not info:
+                raise FileNotFoundError("Nie znaleziono kompletnego wytrenowanego modelu XTTS dla tego profilu.")
+            profile.xtts_checkpoint_path = info["checkpoint_path"]
+            profile.xtts_config_path = info["config_path"]
+            profile.xtts_vocab_path = info["vocab_path"]
+            profile.xtts_trained_at = info["trained_at"]
+        profile.xtts_mode = mode
+        metadata_path = os.path.join(profile.folder, "metadata.json")
+        with open(metadata_path, "w", encoding="utf-8") as f:
+            json.dump(asdict(profile), f, ensure_ascii=False, indent=2)
         return profile
 
     def delete_profile(self, name: str) -> None:

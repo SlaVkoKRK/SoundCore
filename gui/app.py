@@ -86,6 +86,7 @@ class SoundCoreApi:
         self._notifications: list[dict] = []
         self._last_generated: str | None = None
         self._update_cache: dict | None = None
+        self._update_install_status: dict = {"state": "idle", "progress": 0, "message": "Brak aktywnej aktualizacji."}
 
     def _notify(self, title: str, message: str, level: str = "info") -> None:
         self._notifications.insert(0, {
@@ -170,9 +171,11 @@ class SoundCoreApi:
                     samples = sum(1 for line in meta.read_text(encoding="utf-8").splitlines() if line.strip())
                 except Exception:
                     pass
+            trained = self._profile_manager.find_trained_xtts(p.name)
             rows.append({
                 "name": p.name, "created_at": p.created_at, "duration_seconds": p.duration_seconds,
-                "has_rvc_model": p.has_rvc_model,
+                "has_rvc_model": p.has_rvc_model, "xtts_mode": p.xtts_mode,
+                "has_trained_xtts": bool(trained), "trained_xtts": trained,
                 "dataset": {"samples": samples, "duration_seconds": 0.0, "duration_minutes": 0.0},
             })
         return rows
@@ -182,9 +185,12 @@ class SoundCoreApi:
         rows = []
         for p in self._profile_manager.list_profiles():
             stats = get_stats(p.folder)
+            trained = self._profile_manager.find_trained_xtts(p.name)
             rows.append({
                 "name": p.name, "created_at": p.created_at, "duration_seconds": p.duration_seconds,
-                "has_rvc_model": p.has_rvc_model, "dataset": stats.to_dict(),
+                "has_rvc_model": p.has_rvc_model, "xtts_mode": p.xtts_mode,
+                "has_trained_xtts": bool(trained), "trained_xtts": trained,
+                "dataset": stats.to_dict(),
             })
         return rows
 
@@ -289,9 +295,16 @@ class SoundCoreApi:
             self._engine = get_engine()
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         raw = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_raw.wav"
-        self._engine.clone_and_speak(text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language)
+        trained_model = None
+        if getattr(profile, "xtts_mode", "base") == "trained":
+            trained_model = {
+                "checkpoint_path": profile.xtts_checkpoint_path,
+                "config_path": profile.xtts_config_path,
+                "vocab_path": profile.xtts_vocab_path,
+            }
+        self._engine.clone_and_speak(text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language, trained_model=trained_model)
         final = raw
-        self._services["xtts"].update(state="ready", message="Model gotowy")
+        self._services["xtts"].update(state="ready", message=("Wytrenowany model profilu" if trained_model else "Bazowy XTTS v2"))
         if use_rvc:
             if self._rvc_engine is None:
                 self._services["rvc"].update(state="loading", message="Ładowanie RVC…")
@@ -313,6 +326,31 @@ class SoundCoreApi:
         threading.Thread(target=lambda: play_wav(self._last_generated), daemon=True).start()
         return {"ok": True}
 
+
+
+    def profile_model_info(self, profile_name: str) -> dict:
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Nie znaleziono profilu.")
+        trained = self._profile_manager.find_trained_xtts(profile_name)
+        return {
+            "ok": True, "profile": profile_name, "mode": getattr(profile, "xtts_mode", "base"),
+            "has_trained_model": bool(trained), "trained_model": trained,
+            "active_checkpoint": getattr(profile, "xtts_checkpoint_path", None),
+        }
+
+    def activate_trained_xtts(self, profile_name: str) -> dict:
+        profile = self._profile_manager.set_xtts_mode(profile_name, "trained")
+        self._profiles_cache = self._profiles_payload_full()
+        # force lazy re-load on the next synthesis; the engine switches model keys safely.
+        self._notify("Model profilu", f"Wytrenowany XTTS jest aktywny dla profilu {profile_name}.", "success")
+        return {"ok": True, "profile": profile_name, "mode": profile.xtts_mode, "profiles": self._profiles_cache, "model": self._profile_manager.find_trained_xtts(profile_name)}
+
+    def use_base_xtts(self, profile_name: str) -> dict:
+        profile = self._profile_manager.set_xtts_mode(profile_name, "base")
+        self._profiles_cache = self._profiles_payload_full()
+        self._notify("Model profilu", f"Profil {profile_name} używa bazowego XTTS v2.", "info")
+        return {"ok": True, "profile": profile_name, "mode": profile.xtts_mode, "profiles": self._profiles_cache}
 
 
     def list_profile_recordings(self, profile_name: str) -> dict:
@@ -506,16 +544,32 @@ class SoundCoreApi:
             self._notify("Błąd aktualizacji", str(exc), "error")
             return {"ok": False, "error": str(exc), "current_version": APP_VERSION}
 
+    def update_install_status(self) -> dict:
+        return dict(self._update_install_status)
+
+    def _install_update_worker(self) -> None:
+        try:
+            self._update_install_status = {"state": "downloading", "progress": 20, "message": "Pobieranie paczki aktualizacji…"}
+            payload = download_update(self._update_cache["channel"])
+            self._update_install_status = {"state": "verified", "progress": 70, "message": "SHA256 poprawne. Przygotowanie aktualizacji…"}
+            self._notify("Aktualizacja pobrana", "SHA256 poprawne. Przygotowuję restart SoundCore.", "success")
+            launch_apply(payload["payload"], str(BASE_DIR))
+            self._update_install_status = {"state": "restarting", "progress": 100, "message": "Aktualizacja gotowa. Restart SoundCore…"}
+            threading.Timer(1.2, lambda: os._exit(0)).start()
+        except Exception as exc:
+            self._update_install_status = {"state": "error", "progress": 0, "message": str(exc)}
+            self._notify("Błąd aktualizacji", str(exc), "error")
+
     def install_update(self) -> dict:
+        if self._update_install_status.get("state") in {"downloading", "verified", "restarting"}:
+            return self.update_install_status()
         if not self._update_cache or not self._update_cache.get("update_available"):
             self._update_cache = self.check_updates()
         if not self._update_cache.get("update_available"):
-            return {"ok": True, "message": "Brak aktualizacji."}
-        payload = download_update(self._update_cache["channel"])
-        self._notify("Aktualizacja pobrana", "SHA256 poprawne. SoundCore uruchomi instalator i zrestartuje aplikację.", "success")
-        launch_apply(payload["payload"], str(BASE_DIR))
-        threading.Timer(0.8, lambda: os._exit(0)).start()
-        return {"ok": True, "restarting": True}
+            return {"ok": True, "state": "idle", "progress": 0, "message": "Brak aktualizacji."}
+        self._update_install_status = {"state": "starting", "progress": 5, "message": "Uruchamianie aktualizacji w tle…"}
+        threading.Thread(target=self._install_update_worker, name="SoundCoreUpdater", daemon=True).start()
+        return {"ok": True, **self._update_install_status}
 
 
 def run() -> None:
@@ -548,6 +602,9 @@ def run() -> None:
         api.delete_profile,
         api.synthesize,
         api.play_last_generated,
+        api.profile_model_info,
+        api.activate_trained_xtts,
+        api.use_base_xtts,
         api.list_profile_recordings,
         api.play_profile_recording,
         api.delete_profile_recording,
@@ -566,6 +623,7 @@ def run() -> None:
         api.stop_training,
         api.check_updates,
         api.install_update,
+        api.update_install_status,
     )
     setup_windows_shell_async(BASE_DIR, APP_ICON)
     webview.start(debug=False)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import json
 import os
 import shutil
@@ -31,29 +32,23 @@ def _version_tuple(v: str) -> tuple[int, ...]:
 
 
 def check_for_update(current_version: str, channel_url: str = DEFAULT_CHANNEL_URL) -> dict:
-    # raw.githubusercontent.com/CDN may briefly cache channel.json after a release.
-    # Always request a unique URL and explicitly disable intermediary/client caches.
-    separator = "&" if "?" in channel_url else "?"
-    fresh_url = f"{channel_url}{separator}_soundcore_ts={int(time.time() * 1000)}"
-    req = urllib.request.Request(
-        fresh_url,
-        headers={
-            "User-Agent": "SoundCore-Updater",
-            "Cache-Control": "no-cache, no-store, max-age=0",
-            "Pragma": "no-cache",
-            "Accept": "application/json",
-        },
-    )
-    with urllib.request.urlopen(req, timeout=12) as r:
-        channel = json.loads(r.read().decode("utf-8"))
+    channel = None
+    source = "GitHub API"
+    api_url = "https://api.github.com/repos/SlaVkoKRK/SoundCore/contents/dist/channel.json?ref=main"
+    try:
+        req = urllib.request.Request(api_url, headers={"User-Agent": "SoundCore-Updater", "Accept": "application/vnd.github+json"})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            payload = json.loads(r.read().decode("utf-8"))
+        channel = json.loads(base64.b64decode(payload["content"]).decode("utf-8"))
+    except Exception:
+        source = "raw.githubusercontent.com (fallback)"
+        separator = "&" if "?" in channel_url else "?"
+        fresh_url = f"{channel_url}{separator}_soundcore_ts={int(time.time() * 1000)}"
+        req = urllib.request.Request(fresh_url, headers={"User-Agent": "SoundCore-Updater", "Cache-Control": "no-cache, no-store, max-age=0", "Pragma": "no-cache", "Accept": "application/json"})
+        with urllib.request.urlopen(req, timeout=12) as r:
+            channel = json.loads(r.read().decode("utf-8"))
     latest = str(channel.get("version", "0.0.0"))
-    return {
-        "ok": True,
-        "current_version": current_version,
-        "latest_version": latest,
-        "update_available": _version_tuple(latest) > _version_tuple(current_version),
-        "channel": channel,
-    }
+    return {"ok": True, "current_version": current_version, "latest_version": latest, "update_available": _version_tuple(latest) > _version_tuple(current_version), "channel": channel, "source": source}
 
 
 def _sha256(path: Path) -> str:
@@ -124,6 +119,7 @@ for _ in range(120):
     except Exception:
         break
 
+old_requirements = (app / "requirements.txt").read_bytes() if (app / "requirements.txt").exists() else b""
 for child in payload.iterdir():
     if child.name in protected:
         continue
@@ -137,7 +133,8 @@ for child in payload.iterdir():
         shutil.copy2(child, dest)
 
 requirements = app / "requirements.txt"
-if requirements.exists():
+new_requirements = requirements.read_bytes() if requirements.exists() else b""
+if requirements.exists() and new_requirements != old_requirements:
     subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(requirements)], cwd=str(app), check=False)
 
 subprocess.Popen([sys.executable, str(app / "main.py")], cwd=str(app), creationflags=(0x00000008 if os.name == "nt" else 0))

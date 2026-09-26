@@ -294,3 +294,8 @@ Windows installer uses Python 3.10 with numpy 1.22.0, scipy 1.11.4 and TTS 0.22.
 - duży timer nagrywania dla referencji i próbek treningowych
 - natychmiastowe odświeżanie biblioteki próbek i statystyk datasetu
 - adaptacyjny eval split XTTS dla małych datasetów
+
+
+## SoundCore 0.5.0
+
+Wersja 0.5.0 rozwija cały workflow od zbierania datasetu do użycia wytrenowanego głosu. Sesja ciągła pozwala nagrywać tekst po tekście bez ręcznego uruchamiania każdej próbki. GPTTrainer raportuje do WebUI realną epokę, krok, loss, learning rate, historię wykresu oraz log techniczny zapisany również w profilu. Po zakończeniu fine-tuningu checkpoint można jednym przyciskiem podpiąć pod profil lub wrócić do bazowego XTTS v2. Aktualizacje są sprawdzane przez GitHub API i przygotowywane w tle przed restartem aplikacji.

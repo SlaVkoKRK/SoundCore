@@ -47,6 +47,8 @@ class VoiceEngine:
 
     def __init__(self) -> None:
         self._model = None
+        self._model_config = None
+        self._model_key = None
         self._device = self._detect_device()
         self._loading = False
         self._load_error: Optional[str] = None
@@ -81,19 +83,49 @@ class VoiceEngine:
     # ------------------------------------------------------------------
     # Ładowanie modelu (lazy loading, thread-safe)
     # ------------------------------------------------------------------
-    def ensure_loaded(self) -> None:
-        """Ładuje model TTS, jeśli jeszcze nie jest załadowany. Blokujące."""
+    def ensure_loaded(self, trained_model: Optional[dict] = None) -> None:
+        """Load base XTTS or a profile-specific fine-tuned XTTS checkpoint."""
+        key = "base" if not trained_model else f"trained:{trained_model.get('checkpoint_path','')}"
         with self._lock:
-            if self._model is not None:
+            if self._model is not None and self._model_key == key:
                 return
             self._loading = True
             self._load_error = None
             try:
-                from TTS.api import TTS  # import lokalny - ciężka zależność
-
-                self._model = TTS(MODEL_NAME).to(self._device)
-            except Exception as exc:  # noqa: BLE001
+                # Release the previous model before switching base/trained checkpoints.
+                self._model = None
+                self._model_config = None
+                try:
+                    import torch
+                    if torch.cuda.is_available():
+                        torch.cuda.empty_cache()
+                except Exception:
+                    pass
+                if not trained_model:
+                    from TTS.api import TTS
+                    self._model = TTS(MODEL_NAME).to(self._device)
+                    self._model_key = "base"
+                else:
+                    from TTS.tts.configs.xtts_config import XttsConfig
+                    from TTS.tts.models.xtts import Xtts
+                    config_path = trained_model.get("config_path")
+                    checkpoint_path = trained_model.get("checkpoint_path")
+                    vocab_path = trained_model.get("vocab_path")
+                    for label, path in (("config", config_path), ("checkpoint", checkpoint_path), ("vocab", vocab_path)):
+                        if not path or not os.path.isfile(path):
+                            raise FileNotFoundError(f"Brak pliku wytrenowanego XTTS ({label}): {path}")
+                    config = XttsConfig()
+                    config.load_json(config_path)
+                    model = Xtts.init_from_config(config)
+                    model.load_checkpoint(config, checkpoint_path=checkpoint_path, vocab_path=vocab_path, use_deepspeed=False)
+                    if self._device == "cuda":
+                        model.cuda()
+                    self._model = model
+                    self._model_config = config
+                    self._model_key = key
+            except Exception as exc:
                 self._load_error = str(exc)
+                self._model_key = None
                 raise
             finally:
                 self._loading = False
@@ -107,6 +139,7 @@ class VoiceEngine:
         speaker_wav_path: str,
         output_path: str,
         language: str = "pl",
+        trained_model: Optional[dict] = None,
     ) -> str:
         """
         Generuje plik audio z wypowiedzianym `text`, w głosie sklonowanym
@@ -126,14 +159,27 @@ class VoiceEngine:
         if not os.path.isfile(speaker_wav_path):
             raise FileNotFoundError(f"Nie znaleziono próbki głosu: {speaker_wav_path}")
 
-        self.ensure_loaded()
+        self.ensure_loaded(trained_model)
 
-        self._model.tts_to_file(
-            text=text,
-            speaker_wav=speaker_wav_path,
-            language=language,
-            file_path=output_path,
-        )
+        if not trained_model:
+            self._model.tts_to_file(
+                text=text,
+                speaker_wav=speaker_wav_path,
+                language=language,
+                file_path=output_path,
+            )
+        else:
+            import soundfile as sf
+            gpt_cond_latent, speaker_embedding = self._model.get_conditioning_latents(audio_path=[speaker_wav_path])
+            result = self._model.inference(
+                text,
+                language,
+                gpt_cond_latent,
+                speaker_embedding,
+            )
+            wav = result["wav"] if isinstance(result, dict) else result
+            sample_rate = int(getattr(getattr(self._model_config, "audio", None), "output_sample_rate", 24000) or 24000)
+            sf.write(output_path, wav, sample_rate)
         return output_path
 
 

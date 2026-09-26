@@ -91,6 +91,8 @@ def build_prompt(
 
     history = load_prompt_history(profile_folder)
     previously_used = set(history.get("used_sentences", []))
+    all_bank_sentences = {sentence for values in bank.values() if isinstance(values, list) for sentence in values if sentence}
+    fresh_remaining_before = len(all_bank_sentences - previously_used)
 
     if purpose == "profile":
         category_order = ["natural", "phonetic", "numbers", "questions", "prosody"]
@@ -143,4 +145,6 @@ def build_prompt(
         "purpose": purpose,
         "history_count": len(previously_used),
         "reused_sentences": reused,
+        "bank_total_sentences": len(all_bank_sentences),
+        "fresh_sentences_remaining": fresh_remaining_before,
     }
