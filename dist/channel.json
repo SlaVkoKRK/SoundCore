@@ -1,9 +1,9 @@
 {
-  "version": "0.3.9",
+  "version": "0.4.0",
   "min_version": "0.2.0",
-  "sha256": "b255ca4646fb27f3986ba53288171b48467cfc89ca5c4b38c282a349dce9546e",
+  "sha256": "a9e6f4d452cc22e7f91ecb04b665a67271affe8b7cd04ab2e542bd3aab685f02",
   "package_encoding": "zip",
-  "package_url": "https://github.com/SlaVkoKRK/SoundCore/releases/download/v0.3.9/soundcore_update.zip",
+  "package_url": "https://github.com/SlaVkoKRK/SoundCore/releases/download/v0.4.0/soundcore_update.zip",
   "sha256_url": "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/soundcore_update.zip.sha256",
-  "release_notes_url": "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/RELEASE_NOTES_0.3.9.md"
+  "release_notes_url": "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/RELEASE_NOTES_0.4.0.md"
 }
