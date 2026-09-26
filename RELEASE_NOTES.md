@@ -1,10 +1,8 @@
-# SoundCore 0.4.3
+# SoundCore 0.4.4
 
-## Windows installer pipeline hotfix
+## Poprawki
 
-- Fixed the GitHub Actions validation step that prevented the Windows installer from being compiled.
-- The validator no longer contains PowerShell interpolation that causes a parser error.
-- The workflow now verifies `bootstrap.ps1` and `SoundCore.iss`, then continues to Inno Setup compilation.
-- The generated `SoundCore-Setup-0.4.3.exe` is uploaded as a workflow artifact and attached to the GitHub Release.
-
-Application functionality is unchanged from 0.4.2.
+- naprawiono kompilację instalatora Windows w GitHub Actions,
+- usunięto nieobsługiwaną funkcję `BoolToStr` z `installer/SoundCore.iss`,
+- diagnostyka instalatora używa teraz wyłącznie standardowego Pascal Script zgodnego z Inno Setup 6.7.1,
+- brak zmian w logice SoundCore względem 0.4.3.

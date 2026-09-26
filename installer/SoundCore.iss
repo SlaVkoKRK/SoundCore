@@ -76,10 +76,18 @@ begin
   PSPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
   ScriptPath := ExpandConstant('{app}\installer\bootstrap.ps1');
   Msg := 'SoundCore installer bootstrap diagnostic' + #13#10 +
-         'PowerShell=' + PSPath + #13#10 +
-         'PowerShellExists=' + BoolToStr(FileExists(PSPath), True) + #13#10 +
-         'Script=' + ScriptPath + #13#10 +
-         'ScriptExists=' + BoolToStr(FileExists(ScriptPath), True) + #13#10;
+         'PowerShell=' + PSPath + #13#10;
+  if FileExists(PSPath) then
+    Msg := Msg + 'PowerShellExists=Yes' + #13#10
+  else
+    Msg := Msg + 'PowerShellExists=No' + #13#10;
+
+  Msg := Msg + 'Script=' + ScriptPath + #13#10;
+  if FileExists(ScriptPath) then
+    Msg := Msg + 'ScriptExists=Yes' + #13#10
+  else
+    Msg := Msg + 'ScriptExists=No' + #13#10;
+
   SaveStringToFile(LogPath, Msg, False);
 end;
 
