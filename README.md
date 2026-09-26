@@ -244,3 +244,7 @@ Warto umieć krótko wyjaśnić:
 - Dlaczego pełny trening TTS od zera jest niepraktyczny w tej skali
   (ilość danych, czas treningu, moc obliczeniowa) – i dlaczego transfer
   learning / voice cloning to rozsądny kompromis.
+
+## Dynamiczne teksty nagraniowe
+
+Od wersji 0.3.5 SoundCore korzysta z lokalnej bazy polskich promptów nagraniowych. Backend dobiera i łączy fragmenty do wybranego czasu próbki. Profile referencyjne otrzymują tekst naturalny, a dataset treningowy rotuje materiał fonetyczny, liczby, pytania, prozodię i tekst techniczny. Bazę można rozszerzać w `training/prompts_pl.json`.

@@ -24,6 +24,7 @@ from system.hardware import detect_hardware
 from system.cuda_manager import CudaRepairManager
 from system.windows_integration import prepare_windows_process, setup_windows_shell_async
 from training.dataset import add_sample, get_stats
+from training.text_bank import build_prompt
 from training.manager import TrainingManager
 from updater.update_manager import check_for_update, download_update, launch_apply
 from voice_engine.rvc_engine import get_rvc_engine
@@ -86,6 +87,9 @@ class SoundCoreApi:
         self._cuda_repair.reconcile(self._hardware.torch_cuda_available)
         self._notify("Ponowne wykrywanie GPU", self._hardware.note, "success" if self._hardware.torch_cuda_available else "warning")
         return self._hardware.to_dict()
+
+    def get_reading_prompt(self, duration: int, purpose: str = "training", nonce: int = 0) -> dict:
+        return build_prompt(duration, purpose, nonce)
 
     def get_devices(self) -> list[dict]:
         result = []
@@ -269,6 +273,7 @@ def run() -> None:
         api.get_state,
         api.refresh_hardware,
         api.get_devices,
+        api.get_reading_prompt,
         api.notifications_state,
         api.mark_notifications_read,
         api.record_profile,

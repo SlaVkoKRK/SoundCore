@@ -3,20 +3,22 @@ let updateInfo=null, trainingTimer=null, cudaTimer=null, sentenceIndex=0;
 const $=id=>document.getElementById(id);
 const esc=s=>String(s??'').replace(/[&<>'"]/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[c]));
 const pages={dashboard:['Pulpit','Twórz, trenuj i zarządzaj swoimi modelami głosu.'],synthesis:['Synteza mowy','Studio generowania mowy z profili SoundCore.'],profiles:['Profile głosu','Nagrywaj i zarządzaj referencjami głosowymi.'],training:['Trening modelu','Buduj dataset i trenuj własny model XTTS v2.'],updates:['Aktualizacje','Aktualizacje pobierane i weryfikowane bezpośrednio z GitHuba.'],settings:['Ustawienia','Informacje o aplikacji, użytkowniku i środowisku.']};
-const sentences=[
-  'Dzisiaj rano powietrze było wyjątkowo chłodne i przejrzyste.',
-  'Proszę przygotować dokumentację projektu przed jutrzejszym spotkaniem.',
-  'Czy możesz sprawdzić, czy wszystkie urządzenia działają prawidłowo?',
-  'Nowoczesne systemy uczą się naturalnego tempa, barwy i intonacji głosu.',
-  'W sobotę pojedziemy nad jezioro, jeżeli pogoda będzie wystarczająco dobra.',
-  'Liczby trzydzieści siedem, sto osiem i dwa tysiące brzmią zupełnie inaczej.'
-];
+let promptNonce=1;
+async function loadPrompt(targetId,metaId,duration,purpose){
+  try{
+    const r=await api('get_reading_prompt',Number(duration),purpose,promptNonce++);
+    $(targetId).value=r.text||'';
+    if(metaId && $(metaId))$(metaId).textContent=`${r.word_count} słów · ok. ${r.estimated_seconds} s · cel ${r.target_seconds} s`;
+    return r;
+  }catch(e){toast('Tekst do nagrania',e.message,'error');return null}
+}
+
 function api(method,...args){if(!window.pywebview?.api?.[method])return Promise.reject(new Error(`API ${method} niedostępne`));return window.pywebview.api[method](...args)}
 function toast(title,msg,level='info'){const t=document.createElement('div');t.className='toast';t.innerHTML=`<b>${esc(title)}</b><p>${esc(msg)}</p>`;$('toastHost').appendChild(t);setTimeout(()=>t.remove(),4200)}
 function showPage(name){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===name));$(`page-${name}`).classList.add('active');$('pageTitle').textContent=pages[name][0];$('pageSubtitle').textContent=pages[name][1]}
 function renderNotifications(){const rows=state.notifications||[];const unread=rows.filter(n=>!n.read).length;$('bellBadge').textContent=unread;$('bellBadge').classList.toggle('hidden',!unread);$('notificationSummary').textContent=unread?`${unread} nowych`:'Brak nowych';$('notificationList').innerHTML=rows.length?rows.map(n=>`<div class="notification ${n.read?'':'unread'}"><span class="level ${esc(n.level)}"></span><div><b>${esc(n.title)}</b><p>${esc(n.message)}</p></div><time>${esc(n.time)}</time></div>`).join(''):'<div class="status-box" style="margin:14px">Brak powiadomień.</div>'}
 function renderProfiles(){const ps=state.profiles||[];const options=ps.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');['dashProfile','synthProfile','trainProfile'].forEach(id=>$(id).innerHTML=options||'<option value="">Brak profili</option>');if(ps.length){$('summaryProfile').textContent=ps[0].name;$('summaryProfileSub').textContent=`${ps[0].duration_seconds}s · ${ps[0].dataset.samples} próbek datasetu`}else{$('summaryProfile').textContent='Brak profilu';$('summaryProfileSub').textContent='Dodaj profil, aby zacząć'}$('profileCards').innerHTML=ps.length?ps.slice(0,3).map(p=>`<div class="profile-card"><div class="profile-avatar">${esc((p.name[0]||'V').toUpperCase())}</div><div><b>${esc(p.name)}</b><small>${p.dataset.samples} próbek · ${p.dataset.duration_minutes} min · ${p.has_rvc_model?'XTTS + RVC':'XTTS v2'}</small></div></div>`).join(''):'<div class="status-box">Brak profili. Dodaj pierwszy głos.</div>';$('profilesTable').innerHTML=ps.length?ps.map(p=>`<div class="profile-row"><div class="profile-avatar">${esc((p.name[0]||'V').toUpperCase())}</div><div><b>${esc(p.name)}</b><small>Referencja ${p.duration_seconds}s · dataset ${p.dataset.samples} próbek / ${p.dataset.duration_minutes} min</small></div><div class="profile-row-actions"><button onclick="playProfile('${encodeURIComponent(p.name)}')">▶ Odsłuchaj</button><button onclick="deleteProfile('${encodeURIComponent(p.name)}')">🗑 Usuń</button></div></div>`).join(''):'<div class="status-box">Nie masz jeszcze profili głosowych.</div>';updateDatasetStats()}
-function renderDevices(){const o=(state.devices||[]).map(d=>`<option value="${d.index}">${esc(d.name)}</option>`).join('');['profileDevice','trainDevice'].forEach(id=>$(id).innerHTML=o||'<option value="">Brak mikrofonu</option>')}
+function renderDevices(){const o=(state.devices||[]).map(d=>`<option value="${d.index}">${esc(d.name)}</option>`).join('');['profileDevice','trainDevice','trainProfileDevice'].forEach(id=>$(id).innerHTML=o||'<option value="">Brak mikrofonu</option>')}
 function renderHardware(){const h=state.hardware||{};$('summaryGpu').textContent=h.gpu_detected?h.gpu_name:(h.cpu||'CPU');$('summaryGpuSub').textContent=h.gpu_detected?`${h.gpu_memory_mb?Math.round(h.gpu_memory_mb/1024)+' GB VRAM · ':''}${h.torch_cuda_available?'CUDA aktywna':'PyTorch CPU-only'}`:'Tryb CPU';$('gpuPill').textContent=h.torch_cuda_available?'GPU':'CPU';$('gpuPill').className=`status-pill ${h.torch_cuda_available?'green':'neutral'}`;$('trainGpuName').textContent=h.gpu_detected?h.gpu_name:'Brak NVIDIA GPU';$('trainGpuNote').textContent=h.note||'';$('cudaState').textContent=h.torch_cuda_available?'Aktywna':'Nieaktywna';$('cudaVersion').textContent=h.torch_cuda_available?`CUDA ${h.torch_cuda_version||''}`:(h.gpu_detected?'Wymaga instalacji builda CUDA':'Brak kompatybilnego GPU');$('settingsGpu').textContent=h.gpu_detected?h.gpu_name:'Brak NVIDIA GPU';$('settingsGpuExtra').textContent=h.gpu_memory_mb?`${Math.round(h.gpu_memory_mb/1024)} GB VRAM · sterownik ${h.nvidia_driver||'—'}`:(h.note||'');$('settingsCuda').textContent=h.torch_cuda_available?`Aktywna ${h.torch_cuda_version||''}`:'Nieaktywna';$('dashTrainDevice').textContent=h.torch_cuda_available?'GPU':'CPU';$('trainerDeviceBadge').textContent=h.torch_cuda_available?'CUDA':'CPU';const needs=!!h.gpu_detected&&!h.torch_cuda_available;$('cudaBanner').classList.toggle('hidden',!needs);$('cudaRepairBox').classList.toggle('hidden',!needs);if(needs)$('cudaBannerText').textContent=`${h.gpu_name} jest widoczny. Zainstalujemy PyTorch 2.5.1 z runtime CUDA 12.4.`}
 function renderTraining(t){
   t=t||{};
@@ -60,7 +62,55 @@ async function refreshCuda(){try{const r=await api('cuda_repair_status');state.c
 window.playProfile=async encoded=>{try{await api('play_profile',decodeURIComponent(encoded))}catch(e){toast('Odtwarzanie',e.message,'error')}};
 window.deleteProfile=async encoded=>{const n=decodeURIComponent(encoded);if(!confirm(`Usunąć profil '${n}'?`))return;try{const r=await api('delete_profile',n);state.profiles=r.profiles;renderProfiles();toast('Profil usunięty',n,'success')}catch(e){toast('Błąd',e.message,'error')}};
 async function startCudaRepair(){if(!confirm('SoundCore zainstaluje w aktywnym środowisku Python oficjalny PyTorch 2.5.1 + CUDA 12.4. Pobieranie może być duże. Kontynuować?'))return;try{state.cuda_repair=await api('install_cuda_runtime');renderCudaRepair(state.cuda_repair);toast('CUDA','Rozpoczęto instalację PyTorch CUDA.','info');clearInterval(cudaTimer);cudaTimer=setInterval(refreshCuda,1500)}catch(e){toast('CUDA',e.message,'error')}}
-function wire(){document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));document.querySelectorAll('[data-goto]').forEach(b=>b.onclick=()=>showPage(b.dataset.goto));$('bellBtn').onclick=e=>{e.stopPropagation();$('notificationPanel').classList.toggle('hidden')};$('markReadBtn').onclick=async()=>{await api('mark_notifications_read');state.notifications=await api('notifications_state');renderNotifications()};document.addEventListener('click',e=>{if(!e.target.closest('.notification-wrap'))$('notificationPanel').classList.add('hidden')});$('trainProfile').onchange=updateDatasetStats;$('nextSentence').onclick=()=>{sentenceIndex=(sentenceIndex+1)%sentences.length;$('trainingSentence').value=sentences[sentenceIndex]};$('trainingSentence').value=sentences[0];$('recordProfileBtn').onclick=async()=>{const b=$('recordProfileBtn');try{b.disabled=true;$('recordProfileStatus').textContent='Nagrywanie w toku… mów teraz.';const r=await api('record_profile',$('newProfileName').value,Number($('profileDuration').value),Number($('profileDevice').value));state.profiles=r.profiles;renderProfiles();$('recordProfileStatus').textContent=`Profil ${r.profile} zapisany.`;toast('Profil gotowy',r.profile,'success')}catch(e){$('recordProfileStatus').textContent=e.message;toast('Nagrywanie',e.message,'error')}finally{b.disabled=false}};$('recordTrainingSample').onclick=async()=>{const b=$('recordTrainingSample');try{b.disabled=true;$('sampleStatus').textContent='Nagrywanie próbki…';const r=await api('record_training_sample',$('trainProfile').value,$('trainingSentence').value,Number($('trainingDuration').value),Number($('trainDevice').value));$('sampleStatus').textContent=`Dodano ${r.sample.id}. Dataset: ${r.dataset.samples} próbek / ${r.dataset.duration_minutes} min.`;await refreshState();sentenceIndex=(sentenceIndex+1)%sentences.length;$('trainingSentence').value=sentences[sentenceIndex];toast('Próbka dodana',r.sample.id,'success')}catch(e){$('sampleStatus').textContent=e.message;toast('Dataset',e.message,'error')}finally{b.disabled=false}};
+function wire(){
+  document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
+  document.querySelectorAll('[data-goto]').forEach(b=>b.onclick=()=>showPage(b.dataset.goto));
+  $('bellBtn').onclick=e=>{e.stopPropagation();$('notificationPanel').classList.toggle('hidden')};
+  $('markReadBtn').onclick=async()=>{await api('mark_notifications_read');state.notifications=await api('notifications_state');renderNotifications()};
+  document.addEventListener('click',e=>{if(!e.target.closest('.notification-wrap'))$('notificationPanel').classList.add('hidden')});
+
+  $('trainProfile').onchange=updateDatasetStats;
+  $('profileDuration').onchange=()=>loadPrompt('profileReadingText','profilePromptMeta',$('profileDuration').value,'profile');
+  $('profileNewPrompt').onclick=()=>loadPrompt('profileReadingText','profilePromptMeta',$('profileDuration').value,'profile');
+  $('trainingDuration').onchange=()=>loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training');
+  $('nextSentence').onclick=()=>loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training');
+  $('trainProfileDuration').onchange=()=>loadPrompt('trainProfileReadingText','trainProfilePromptMeta',$('trainProfileDuration').value,'profile');
+  $('trainProfileNewPrompt').onclick=()=>loadPrompt('trainProfileReadingText','trainProfilePromptMeta',$('trainProfileDuration').value,'profile');
+  $('toggleTrainProfileCreate').onclick=()=>$('trainProfileCreator').classList.toggle('hidden');
+
+  $('recordProfileBtn').onclick=async()=>{
+    const b=$('recordProfileBtn');
+    try{
+      b.disabled=true;$('recordProfileStatus').textContent='Nagrywanie w toku… czytaj pokazany tekst.';
+      const r=await api('record_profile',$('newProfileName').value,Number($('profileDuration').value),Number($('profileDevice').value));
+      state.profiles=r.profiles;renderProfiles();$('recordProfileStatus').textContent=`Profil ${r.profile} zapisany.`;toast('Profil gotowy',r.profile,'success');
+    }catch(e){$('recordProfileStatus').textContent=e.message;toast('Nagrywanie',e.message,'error')}finally{b.disabled=false}
+  };
+
+  $('createProfileInTraining').onclick=async()=>{
+    const b=$('createProfileInTraining');
+    try{
+      b.disabled=true;$('trainProfileCreateStatus').textContent='Nagrywanie referencji… czytaj pokazany tekst.';
+      const r=await api('record_profile',$('trainNewProfileName').value,Number($('trainProfileDuration').value),Number($('trainProfileDevice').value));
+      state.profiles=r.profiles;renderProfiles();
+      $('trainProfile').value=r.profile;updateDatasetStats();
+      $('trainProfileCreateStatus').textContent=`Profil ${r.profile} utworzony i wybrany do treningu.`;
+      toast('Profil gotowy',r.profile,'success');
+    }catch(e){$('trainProfileCreateStatus').textContent=e.message;toast('Profil',e.message,'error')}finally{b.disabled=false}
+  };
+
+  $('recordTrainingSample').onclick=async()=>{
+    const b=$('recordTrainingSample');
+    try{
+      b.disabled=true;$('sampleStatus').textContent='Nagrywanie próbki… czytaj pokazany tekst.';
+      const r=await api('record_training_sample',$('trainProfile').value,$('trainingSentence').value,Number($('trainingDuration').value),Number($('trainDevice').value));
+      $('sampleStatus').textContent=`Dodano ${r.sample.id}. Dataset: ${r.dataset.samples} próbek / ${r.dataset.duration_minutes} min.`;
+      await refreshState();
+      await loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training');
+      toast('Próbka dodana',r.sample.id,'success');
+    }catch(e){$('sampleStatus').textContent=e.message;toast('Dataset',e.message,'error')}finally{b.disabled=false}
+  };
+
 const synth=async dash=>{const text=dash?$('dashText').value:$('synthText').value,profile=dash?$('dashProfile').value:$('synthProfile').value,lang=dash?$('dashLanguage').value:$('synthLanguage').value,rvc=dash?false:$('synthRvc').checked,btn=dash?$('dashGenerate'):$('synthGenerate');try{btn.disabled=true;const old=btn.textContent;btn.dataset.old=old;btn.textContent='Generowanie…';const r=await api('synthesize',text,profile,lang,rvc);$('playerStatus').textContent=r.name;$('synthResult').textContent=`Gotowe: ${r.path}`;toast('Synteza gotowa',r.name,'success');await refreshState()}catch(e){toast('Synteza',e.message,'error');$('synthResult').textContent=e.message}finally{btn.disabled=false;btn.textContent=btn.dataset.old||'Generuj'}};$('dashGenerate').onclick=()=>synth(true);$('synthGenerate').onclick=()=>synth(false);['dashPlay','playerPlay','synthPlay'].forEach(id=>$(id).onclick=async()=>{try{await api('play_last_generated')}catch(e){toast('Odtwarzanie',e.message,'error')}});$('refreshGpu').onclick=async()=>{try{state.hardware=await api('refresh_hardware');renderHardware();toast('GPU',state.hardware.note,state.hardware.torch_cuda_available?'success':'info')}catch(e){toast('GPU',e.message,'error')}};$('cudaInstallQuick').onclick=$('installCudaBtn').onclick=startCudaRepair;$('restartAfterCuda').onclick=async()=>{await api('restart_app')};$('startTraining').onclick=async()=>{try{renderTraining(await api('start_training',$('trainProfile').value,'pl',Number($('trainEpochs').value),$('trainCompute').value,Number($('trainBatch').value)));toast('Trening','Uruchomiono GPTTrainer','success')}catch(e){toast('Trening',e.message,'error')}};$('stopTraining').onclick=$('dashStopTraining').onclick=async()=>{try{renderTraining(await api('stop_training'));toast('Trening','Zatrzymano trening','info')}catch(e){toast('Trening',e.message,'error')}};
 const check=async()=>{try{$('checkUpdates').disabled=true;$('updateStatus').textContent='Sprawdzanie kanału GitHub…';updateInfo=await api('check_updates');if(!updateInfo.ok)throw new Error(updateInfo.error);$('latestVersion').textContent=`v${updateInfo.latest_version}`;$('updatesLatest').textContent=`v${updateInfo.latest_version}`;$('latestState').textContent=updateInfo.update_available?'Dostępna aktualizacja':'Masz najnowszą wersję';$('installUpdate').disabled=!updateInfo.update_available;$('updateStatus').textContent=updateInfo.update_available?`Dostępna wersja ${updateInfo.latest_version}.`:'Masz najnowszą wersję SoundCore.';state.notifications=await api('notifications_state');renderNotifications()}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacje',e.message,'error')}finally{$('checkUpdates').disabled=false}};$('checkUpdates').onclick=$('dashCheckUpdates').onclick=check;$('installUpdate').onclick=async()=>{if(!confirm('Pobrać i zainstalować aktualizację z GitHuba?'))return;try{$('installUpdate').disabled=true;$('updateStatus').textContent='Pobieranie i weryfikacja SHA256…';const r=await api('install_update');if(r.restarting)$('updateStatus').textContent='Aktualizacja gotowa. Restart…'}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacja',e.message,'error');$('installUpdate').disabled=false}}}
-window.addEventListener('pywebviewready',async()=>{wire();await refreshState();trainingTimer=setInterval(refreshTraining,1800);if(['starting','installing'].includes(state.cuda_repair?.state))cudaTimer=setInterval(refreshCuda,1500)});
+window.addEventListener('pywebviewready',async()=>{wire();await refreshState();await Promise.all([loadPrompt('profileReadingText','profilePromptMeta',$('profileDuration').value,'profile'),loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training'),loadPrompt('trainProfileReadingText','trainProfilePromptMeta',$('trainProfileDuration').value,'profile')]);trainingTimer=setInterval(refreshTraining,1800);if(['starting','installing'].includes(state.cuda_repair?.state))cudaTimer=setInterval(refreshCuda,1500)});

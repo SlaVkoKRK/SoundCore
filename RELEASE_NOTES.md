@@ -1,13 +1,14 @@
-# SoundCore 0.3.4
+# SoundCore 0.3.5
 
-Windows/UI quality hotfix.
+## UI
+- jasny, subtelny scrollbar zamiast czarnego paska WebView2 przy zmaksymalizowanym oknie,
+- dodatkowe sekcje tekstu do czytania w Profilach głosu i Treningu modelu,
+- możliwość utworzenia profilu bez opuszczania zakładki Trening modelu.
 
-- SoundCore starts maximized using the native pywebview `maximized` mode.
-- System title bar is styled to match the light SoundCore theme on supported Windows builds.
-- Added a native SoundCore `.ico` for the title bar, Alt-Tab and taskbar identity.
-- SoundCore automatically creates/refreshes a desktop shortcut that starts the app through `pythonw.exe` from the active venv.
-- Training stop controls are shown only while a training job is actually running; start/stop buttons now track the real training state.
-- CUDA repair state is reconciled with the actual PyTorch CUDA state. If CUDA is active, the stale “restart SoundCore” prompt disappears automatically.
-- CUDA repair no longer lets pip upgrade NumPy/SciPy unexpectedly. PyTorch CUDA wheels are installed with `--no-deps`, then SoundCore restores `numpy==1.22.0` and `scipy==1.10.1`.
-- Normal WebView2 diagnostic logging is reduced to avoid noisy Chromium console messages during shutdown.
-- Requirements now explicitly pin SciPy 1.10.1 for the current NumPy/TTS stack.
+## Dynamiczne teksty nagraniowe
+- nowa lokalna baza polskich tekstów podzielona na kategorie: naturalne, fonetyczne, liczby, pytania, prozodia i techniczne,
+- tekst jest składany dynamicznie do zadanej długości nagrania,
+- profil referencyjny preferuje naturalną, ciągłą mowę,
+- dataset treningowy rotuje materiał fonetyczny i prozodyczny,
+- przy zmianie czasu próbki tekst przelicza się automatycznie,
+- przycisk „Inny tekst” / „Następny tekst” pobiera kolejny wariant z backendu.
