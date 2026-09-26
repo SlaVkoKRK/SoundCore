@@ -9,6 +9,8 @@ import sys
 import tarfile
 import tempfile
 import urllib.request
+import urllib.parse
+import time
 import zipfile
 from pathlib import Path
 
@@ -29,7 +31,19 @@ def _version_tuple(v: str) -> tuple[int, ...]:
 
 
 def check_for_update(current_version: str, channel_url: str = DEFAULT_CHANNEL_URL) -> dict:
-    req = urllib.request.Request(channel_url, headers={"User-Agent": "SoundCore-Updater"})
+    # raw.githubusercontent.com/CDN may briefly cache channel.json after a release.
+    # Always request a unique URL and explicitly disable intermediary/client caches.
+    separator = "&" if "?" in channel_url else "?"
+    fresh_url = f"{channel_url}{separator}_soundcore_ts={int(time.time() * 1000)}"
+    req = urllib.request.Request(
+        fresh_url,
+        headers={
+            "User-Agent": "SoundCore-Updater",
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+            "Accept": "application/json",
+        },
+    )
     with urllib.request.urlopen(req, timeout=12) as r:
         channel = json.loads(r.read().decode("utf-8"))
     latest = str(channel.get("version", "0.0.0"))

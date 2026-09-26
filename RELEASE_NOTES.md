@@ -1,12 +1,7 @@
-# SoundCore 0.3.6
+# SoundCore 0.3.7
 
-## Prompt history + topbar interactions
-
-- trwała historia tekstów per profil w `voice_profiles/<profil>/prompt_history.json`,
-- generator najpierw wybiera teksty, których dany profil jeszcze nie czytał,
-- historia obejmuje referencję profilu oraz próbki datasetu i przeżywa restart/aktualizację,
-- odświeżona ikona powiadomień SVG oraz wyraźny stan nieprzeczytanych,
-- działająca wyszukiwarka globalna z `Ctrl+K`, wynikami i nawigacją,
-- usunięty niedziałający skrót `⌘ K` niepasujący do Windows,
-- działające menu użytkownika: Ustawienia, Folder SoundCore, Restart, wersja i ścieżka instalacji,
-- wyszukiwarka znajduje moduły SoundCore oraz profile głosowe.
+- updater zawsze pobiera świeży `dist/channel.json` z GitHuba
+- dodany cache-buster do URL kanału aktualizacji
+- nagłówki `Cache-Control: no-cache/no-store` i `Pragma: no-cache`
+- nowe wersje powinny być widoczne natychmiast po publikacji
+- bez zmian w profilach, datasetach i modelach użytkownika
