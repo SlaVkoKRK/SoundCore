@@ -43,6 +43,19 @@ async function pollStartup(){
     }
   }catch(e){}
 }
+
+function waitMs(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
+async function withRecordingTimer(durationSeconds,title,action){
+  const overlay=$('recordingTimerOverlay'),phase=$('recordingTimerPhase'),value=$('recordingTimerValue'),ttl=$('recordingTimerTitle'),bar=$('recordingTimerBar'),hint=$('recordingTimerHint');
+  const duration=Math.max(1,Number(durationSeconds)||1);
+  overlay.classList.remove('hidden','is-recording','processing');ttl.textContent=title||'Nagrywanie';hint.textContent='Przygotuj się i zacznij czytać po odliczaniu.';bar.style.width='0%';
+  for(let n=3;n>=1;n--){phase.textContent='PRZYGOTUJ SIĘ';value.textContent=String(n);await waitMs(1000)}
+  overlay.classList.add('is-recording');phase.textContent='● NAGRYWANIE';ttl.textContent=title||'Nagrywanie w toku';hint.textContent='Czytaj tekst naturalnie. Nie zamykaj okna.';
+  const started=performance.now(); let timer=null;
+  const paint=()=>{const elapsed=(performance.now()-started)/1000;const left=Math.max(0,duration-elapsed);value.textContent=`${left.toFixed(1)} s`;bar.style.width=`${Math.min(100,elapsed/duration*100)}%`;if(left<=0){clearInterval(timer);overlay.classList.remove('is-recording');overlay.classList.add('processing');phase.textContent='PRZETWARZANIE';value.textContent='Gotowe';ttl.textContent='Zapisuję i przygotowuję nagranie…';hint.textContent='Nagranie zakończone.'}};
+  paint();timer=setInterval(paint,100);
+  try{return await action()}finally{clearInterval(timer);setTimeout(()=>overlay.classList.add('hidden'),350)}
+}
 function toast(title,msg,level='info'){const t=document.createElement('div');t.className='toast';t.innerHTML=`<b>${esc(title)}</b><p>${esc(msg)}</p>`;$('toastHost').appendChild(t);setTimeout(()=>t.remove(),4200)}
 function showPage(name){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===name));$(`page-${name}`).classList.add('active');$('pageTitle').textContent=pages[name][0];$('pageSubtitle').textContent=pages[name][1]}
 function renderNotifications(){const rows=state.notifications||[];const unread=rows.filter(n=>!n.read).length;$('bellBadge').textContent=unread;$('bellBadge').classList.toggle('hidden',!unread);$('bellBtn').classList.toggle('has-unread',!!unread);$('notificationSummary').textContent=unread?`${unread} nowych`:'Brak nowych';$('notificationList').innerHTML=rows.length?rows.map(n=>`<div class="notification ${n.read?'':'unread'}"><span class="level ${esc(n.level)}"></span><div><b>${esc(n.title)}</b><p>${esc(n.message)}</p></div><time>${esc(n.time)}</time></div>`).join(''):'<div class="status-box" style="margin:14px">Brak powiadomień.</div>'}
@@ -157,7 +170,8 @@ function wire(){
     const b=$('recordProfileBtn');
     try{
       b.disabled=true;$('recordProfileStatus').textContent='Nagrywanie w toku… czytaj pokazany tekst.';
-      const r=await api('record_profile',$('newProfileName').value,Number($('profileDuration').value),Number($('profileDevice').value),$('profileReadingText').value);
+      const duration=Number($('profileDuration').value);
+      const r=await withRecordingTimer(duration,'Nagranie referencyjne',()=>api('record_profile',$('newProfileName').value,duration,Number($('profileDevice').value),$('profileReadingText').value));
       state.profiles=r.profiles;renderProfiles();$('recordProfileStatus').textContent=`Profil ${r.profile} zapisany.`;toast('Profil gotowy',r.profile,'success');
     }catch(e){$('recordProfileStatus').textContent=e.message;toast('Nagrywanie',e.message,'error')}finally{b.disabled=false}
   };
@@ -166,7 +180,8 @@ function wire(){
     const b=$('createProfileInTraining');
     try{
       b.disabled=true;$('trainProfileCreateStatus').textContent='Nagrywanie referencji… czytaj pokazany tekst.';
-      const r=await api('record_profile',$('trainNewProfileName').value,Number($('trainProfileDuration').value),Number($('trainProfileDevice').value),$('trainProfileReadingText').value);
+      const duration=Number($('trainProfileDuration').value);
+      const r=await withRecordingTimer(duration,'Nagranie referencyjne',()=>api('record_profile',$('trainNewProfileName').value,duration,Number($('trainProfileDevice').value),$('trainProfileReadingText').value));
       state.profiles=r.profiles;renderProfiles();
       $('trainProfile').value=r.profile;updateDatasetStats();
       $('trainProfileCreateStatus').textContent=`Profil ${r.profile} utworzony i wybrany do treningu.`;
@@ -178,10 +193,14 @@ function wire(){
     const b=$('recordTrainingSample');
     try{
       b.disabled=true;$('sampleStatus').textContent='Nagrywanie próbki… czytaj pokazany tekst.';
-      const r=await api('record_training_sample',$('trainProfile').value,$('trainingSentence').value,Number($('trainingDuration').value),Number($('trainDevice').value));
+      const duration=Number($('trainingDuration').value);
+      const profileName=$('trainProfile').value;
+      const r=await withRecordingTimer(duration,'Próbka treningowa',()=>api('record_training_sample',profileName,$('trainingSentence').value,duration,Number($('trainDevice').value)));
       $('sampleStatus').textContent=`Dodano ${r.sample.id}. Dataset: ${r.dataset.samples} próbek / ${r.dataset.duration_minutes} min.`;
-      await refreshState();
-      await loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training',$('trainProfile').value);
+      if(r.profiles)state.profiles=r.profiles;else await refreshState();
+      renderProfiles();
+      if($('recordingsProfile')){$('recordingsProfile').value=profileName;await loadRecordings()}
+      await loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training',profileName);
       toast('Próbka dodana',r.sample.id,'success');
     }catch(e){$('sampleStatus').textContent=e.message;toast('Dataset',e.message,'error')}finally{b.disabled=false}
   };
@@ -214,8 +233,8 @@ async function loadRecordings(){
     $('recordingsStats').textContent=`${rows.length} nagrań · dataset ${r.stats.samples} próbek · ${r.stats.duration_minutes} min`;
     $('recordingsList').innerHTML=rows.length?rows.map(x=>`<div class="recording-row"><div class="recording-type">${x.kind==='reference'?'R':'A'}</div><div><b>${esc(x.kind==='reference'?'Referencja profilu':x.id)}</b><small>${Number(x.duration_seconds||0).toFixed(2)} s · ${esc(x.source_name||'SoundCore')}</small></div><div class="recording-transcript" title="${esc(x.text||'')}">${esc(x.text||'Brak transkrypcji')}</div><div class="recording-row-actions"><button data-rec-play="${esc(x.id)}">▶</button>${x.deletable?`<button data-rec-edit="${esc(x.id)}">✎</button><button class="danger" data-rec-del="${esc(x.id)}">🗑</button>`:''}</div></div>`).join(''):'<div class="status-box">Brak nagrań dla profilu.</div>';
     $('recordingsList').querySelectorAll('[data-rec-play]').forEach(b=>b.onclick=async()=>{try{await api('play_profile_recording',profile,b.dataset.recPlay)}catch(e){toast('Odtwarzanie',e.message,'error')}});
-    $('recordingsList').querySelectorAll('[data-rec-edit]').forEach(b=>b.onclick=async()=>{const row=b.closest('.recording-row');const current=row?.querySelector('.recording-transcript')?.textContent||'';const text=prompt('Wpisz dokładną transkrypcję próbki:',current==='Brak transkrypcji'?'':current);if(text===null)return;try{await api('update_profile_recording_text',profile,b.dataset.recEdit,text);await loadRecordings();toast('Transkrypcja','Zapisano tekst próbki.','success')}catch(e){toast('Transkrypcja',e.message,'error')}});
-    $('recordingsList').querySelectorAll('[data-rec-del]').forEach(b=>b.onclick=async()=>{if(!confirm(`Usunąć próbkę ${b.dataset.recDel}?`))return;try{await api('delete_profile_recording',profile,b.dataset.recDel);await loadRecordings();await refreshState();toast('Próbka','Usunięto nagranie','success')}catch(e){toast('Usuwanie',e.message,'error')}});
+    $('recordingsList').querySelectorAll('[data-rec-edit]').forEach(b=>b.onclick=async()=>{const row=b.closest('.recording-row');const current=row?.querySelector('.recording-transcript')?.textContent||'';const text=prompt('Wpisz dokładną transkrypcję próbki:',current==='Brak transkrypcji'?'':current);if(text===null)return;try{const r=await api('update_profile_recording_text',profile,b.dataset.recEdit,text);if(r.profiles){state.profiles=r.profiles;renderProfiles()}await loadRecordings();toast('Transkrypcja','Zapisano tekst próbki.','success')}catch(e){toast('Transkrypcja',e.message,'error')}});
+    $('recordingsList').querySelectorAll('[data-rec-del]').forEach(b=>b.onclick=async()=>{if(!confirm(`Usunąć próbkę ${b.dataset.recDel}?`))return;try{const r=await api('delete_profile_recording',profile,b.dataset.recDel);if(r.profiles){state.profiles=r.profiles;renderProfiles()}await loadRecordings();toast('Próbka','Usunięto nagranie','success')}catch(e){toast('Usuwanie',e.message,'error')}});
   }catch(e){$('recordingsList').innerHTML=`<div class="status-box">${esc(e.message)}</div>`}
 }
 function drawMediaWave(peaks){
@@ -236,7 +255,7 @@ async function openMediaEditor(){
   const b=$('importMediaBtn');try{b.disabled=true;b.textContent='Importuję…';const r=await api('begin_media_import',profile);if(r.cancelled)return;mediaSession=r;$('mediaSourceName').textContent=r.source_name;$('mediaStartRange').max=r.duration_seconds;$('mediaEndRange').max=r.duration_seconds;$('mediaStartRange').value=0;$('mediaEndRange').value=r.duration_seconds;$('mediaTranscript').value='';$('mediaEditor').classList.remove('hidden');requestAnimationFrame(()=>{drawMediaWave(r.peaks);updateMediaSelection()});$('mediaEditorStatus').textContent=`Źródło: ${r.source_name} · ${Number(r.duration_seconds).toFixed(2)} s. Zaznacz fragment z właściwym głosem.`}catch(e){toast('Import pliku',e.message,'error')}finally{b.disabled=false;b.textContent='＋ Importuj audio / film'}}
 async function closeMediaEditor(){if(mediaSession){try{await api('close_media_import',mediaSession.session_id)}catch(e){}}mediaSession=null;$('mediaEditor').classList.add('hidden')}
 async function previewMedia(){if(!mediaSession)return;try{$('mediaEditorStatus').textContent='Odtwarzam zaznaczony fragment…';await api('preview_media_clip',mediaSession.session_id,Number($('mediaStartRange').value),Number($('mediaEndRange').value))}catch(e){toast('Podgląd',e.message,'error')}}
-async function saveMedia(){if(!mediaSession)return;const profile=$('recordingsProfile').value;const b=$('saveMediaClip');try{b.disabled=true;b.textContent='Zapisuję…';const r=await api('save_media_clip',profile,mediaSession.session_id,Number($('mediaStartRange').value),Number($('mediaEndRange').value),$('mediaTranscript').value);$('mediaEditorStatus').textContent=`Zapisano ${r.sample.id} · ${Number(r.sample.duration_seconds).toFixed(2)} s.`;await loadRecordings();await refreshState();toast('Próbka zapisana',`${r.sample.id} z ${r.sample.source_name}`,'success')}catch(e){toast('Zapis próbki',e.message,'error')}finally{b.disabled=false;b.textContent='✦ Zapisz jako próbkę'}}
+async function saveMedia(){if(!mediaSession)return;const profile=$('recordingsProfile').value;const b=$('saveMediaClip');try{b.disabled=true;b.textContent='Zapisuję…';const r=await api('save_media_clip',profile,mediaSession.session_id,Number($('mediaStartRange').value),Number($('mediaEndRange').value),$('mediaTranscript').value);if(r.profiles){state.profiles=r.profiles;renderProfiles()}$('mediaEditorStatus').textContent=`Zapisano ${r.sample.id} · ${Number(r.sample.duration_seconds).toFixed(2)} s.`;await loadRecordings();await refreshState();toast('Próbka zapisana',`${r.sample.id} z ${r.sample.source_name}`,'success')}catch(e){toast('Zapis próbki',e.message,'error')}finally{b.disabled=false;b.textContent='✦ Zapisz jako próbkę'}}
 function wireRecordingLibrary(){
   if(!$('recordingsProfile'))return; syncRecordingProfileOptions(); $('recordingsProfile').onchange=loadRecordings; $('importMediaBtn').onclick=openMediaEditor; $('mediaStartRange').oninput=updateMediaSelection;$('mediaEndRange').oninput=updateMediaSelection;$('previewMediaClip').onclick=previewMedia;$('saveMediaClip').onclick=saveMedia;$('closeMediaEditor').onclick=closeMediaEditor;$('mediaEditor').onclick=e=>{if(e.target===$('mediaEditor'))closeMediaEditor()}; window.addEventListener('resize',()=>{if(mediaSession)drawMediaWave(mediaSession.peaks)}); loadRecordings();
 }

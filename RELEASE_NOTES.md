@@ -1,12 +1,7 @@
-# SoundCore 0.4.7
+# SoundCore 0.4.8
 
-- Fixed Windows installer runtime verification quoting: bootstrap no longer uses `python -c` for the final import test.
-- Runtime verification is written to a temporary Python file and executed normally.
-- Installer always shows the destination folder page while still remembering the previous path.
-
-# SoundCore 0.4.6
-
-- Naprawiono konflikt zależności instalatora: TTS 0.22.0 wymaga scipy>=1.11.2.
-- Ustawiono zgodny stos Python 3.10: numpy==1.22.0, scipy==1.11.4, TTS==0.22.0.
-- Usunięto końcowe wymuszanie scipy==1.10.1, które psuło instalację.
-- TTS jest przypięte do 0.22.0, aby przyszłe wydania nie zmieniały zależności instalatora.
+- duży timer nagrywania z odliczaniem 3-2-1 i paskiem postępu dla referencji i próbek treningowych
+- naprawa cache profili po zapisie/usunięciu/edycji/importowaniu próbki
+- licznik datasetu i biblioteka nagrań odświeżają się natychmiast po nagraniu
+- adaptacyjny eval split XTTS dla małych datasetów; minimum 3 próbki
+- usunięty techniczny błąd `eval_split_size` przy 3 próbkach

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import csv
 import json
 import os
 import sys
@@ -26,7 +27,16 @@ def main(job_path: str) -> None:
     if not metadata.exists():
         raise RuntimeError("Brak dataset/metadata.csv. Dodaj próbki treningowe.")
 
-    write_status(status_path, state="preparing", progress=2, message="Przygotowanie XTTS GPTTrainer…")
+    with metadata.open("r", encoding="utf-8", newline="") as f:
+        dataset_rows = [row for row in csv.reader(f, delimiter="|") if row and row[0].strip()]
+    sample_count = len(dataset_rows)
+    if sample_count < 3:
+        raise RuntimeError(f"Do treningu potrzebne są co najmniej 3 próbki. Aktualnie: {sample_count}.")
+    # Coqui rejects its tiny default eval split on very small datasets.
+    # Keep exactly one validation sample for datasets below 10 samples, then 10%.
+    eval_split_size = (1.0 / sample_count) if sample_count < 10 else 0.10
+
+    write_status(status_path, state="preparing", progress=2, message=f"Przygotowanie XTTS GPTTrainer… Dataset: {sample_count} próbek.")
 
     import torch
     from trainer import Trainer, TrainerArgs
@@ -97,6 +107,7 @@ def main(job_path: str) -> None:
         eval_batch_size=1 if not use_cuda else batch,
         num_loader_workers=0 if os.name == "nt" else 2,
         eval_split_max_size=64,
+        eval_split_size=eval_split_size,
         print_step=10,
         plot_step=100,
         log_model_step=500,

@@ -257,8 +257,10 @@ class SoundCoreApi:
         sample = add_sample(profile.folder, cleaned, DEFAULT_SAMPLERATE, text)
         remember_prompt(profile.folder, text, "training")
         stats = get_stats(profile.folder)
+        # Fast-start keeps a profile cache; refresh it after every dataset mutation.
+        self._profiles_cache = self._profiles_payload_full()
         self._notify("Próbka treningowa", f"Dodano próbkę {sample['id']} do profilu {profile_name}.", "success")
-        return {"ok": True, "sample": sample, "dataset": stats.to_dict()}
+        return {"ok": True, "sample": sample, "dataset": stats.to_dict(), "profiles": self._profiles_cache}
 
     def play_profile(self, profile_name: str) -> dict:
         profile = self._profile_manager.get_profile(profile_name)
@@ -362,8 +364,11 @@ class SoundCoreApi:
             raise ValueError("Nie znaleziono profilu.")
         if not delete_sample(profile.folder, recording_id):
             raise ValueError("Nie znaleziono nagrania.")
+        self._profiles_cache = self._profiles_payload_full()
         self._notify("Próbka usunięta", f"Usunięto {recording_id} z profilu {profile_name}.", "info")
-        return self.list_profile_recordings(profile_name)
+        result = self.list_profile_recordings(profile_name)
+        result["profiles"] = self._profiles_cache
+        return result
 
     def update_profile_recording_text(self, profile_name: str, recording_id: str, text: str) -> dict:
         from training.dataset import update_sample_text
@@ -373,7 +378,10 @@ class SoundCoreApi:
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
         update_sample_text(profile.folder, recording_id, text)
-        return self.list_profile_recordings(profile_name)
+        self._profiles_cache = self._profiles_payload_full()
+        result = self.list_profile_recordings(profile_name)
+        result["profiles"] = self._profiles_cache
+        return result
 
     def begin_media_import(self, profile_name: str) -> dict:
         from training.media_library import begin_import
@@ -413,8 +421,9 @@ class SoundCoreApi:
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
         sample = save_clip(profile.folder, session_id, start, end, text)
+        self._profiles_cache = self._profiles_payload_full()
         self._notify("Zaimportowano próbkę", f"{sample['id']} · {sample['duration_seconds']} s z pliku {sample['source_name']}", "success")
-        return {"ok": True, "sample": sample, "recordings": self.list_profile_recordings(profile_name)["recordings"], "stats": get_stats(profile.folder).to_dict()}
+        return {"ok": True, "sample": sample, "recordings": self.list_profile_recordings(profile_name)["recordings"], "stats": get_stats(profile.folder).to_dict(), "profiles": self._profiles_cache}
 
     def close_media_import(self, session_id: str) -> dict:
         from training.media_library import close_session

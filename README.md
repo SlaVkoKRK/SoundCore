@@ -288,3 +288,9 @@ The Windows installer bootstrap now uses collision-free PowerShell argument hand
 ## 0.4.6 installer dependency stack
 
 Windows installer uses Python 3.10 with numpy 1.22.0, scipy 1.11.4 and TTS 0.22.0.
+
+
+## 0.4.8
+- duży timer nagrywania dla referencji i próbek treningowych
+- natychmiastowe odświeżanie biblioteki próbek i statystyk datasetu
+- adaptacyjny eval split XTTS dla małych datasetów
