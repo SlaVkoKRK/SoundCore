@@ -1,12 +1,10 @@
-# SoundCore 0.3.1
+# SoundCore 0.3.3
 
-- całkowicie dopracowany jasny Modern WebUI zgodny z makietą SoundCore
-- wyraźne logo i stała informacja o wersji
-- rzeczywisty użytkownik Windows w nagłówku
-- działający panel powiadomień z licznikiem
-- pełny panel datasetu i treningu XTTS / GPTTrainer
-- wykrywanie NVIDIA przez nvidia-smi niezależnie od buildu PyTorch
-- automatyczna naprawa środowiska GPU: PyTorch 2.5.1 + CUDA 12.4
-- status instalacji CUDA i restart aplikacji po naprawie
-- aktualizacje ZIP przez GitHub z SHA256
-- publikacja release bundle bez rozpakowywania przez użytkownika
+Hotfix mostu WebUI / CUDA / logo.
+
+- całkowicie usunięto przekazywanie obiektu `js_api` do pywebview
+- JavaScript otrzymuje wyłącznie jawną białą listę metod przez `window.expose(...)`
+- brak jakiejkolwiek referencji z API do `window.native`, WinForms i WebView2 COM
+- poprawiono wywołanie `Napraw CUDA` i status instalacji PyTorch CUDA
+- logo SoundCore jest osadzone bezpośrednio w HTML jako data URI, więc nie zależy od lokalnych ścieżek assetów
+- zachowano trening XTTS/GPTTrainer, powiadomienia, profile i aktualizacje GitHub

@@ -27,34 +27,30 @@ from voice_engine.tts_engine import get_engine
 BASE_DIR = Path(__file__).resolve().parents[1]
 WEBUI_DIR = BASE_DIR / "webui"
 OUTPUT_DIR = BASE_DIR / "output"
-APP_VERSION = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip() if (BASE_DIR / "VERSION").exists() else "0.3.1"
+APP_VERSION = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip() if (BASE_DIR / "VERSION").exists() else "0.3.3"
 CHANNEL_URL = "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/channel.json"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
 
 class SoundCoreApi:
     def __init__(self) -> None:
-        self.profile_manager = ProfileManager()
-        self.engine = get_engine()
-        self.rvc_engine = get_rvc_engine()
-        self.training = TrainingManager(str(BASE_DIR))
-        self.cuda_repair = CudaRepairManager(BASE_DIR / "training_runtime")
-        self.hardware = detect_hardware()
-        self.window = None
-        self.notifications: list[dict] = []
-        self.last_generated: str | None = None
-        self.update_cache: dict | None = None
+        self._profile_manager = ProfileManager()
+        self._engine = get_engine()
+        self._rvc_engine = get_rvc_engine()
+        self._training = TrainingManager(str(BASE_DIR))
+        self._cuda_repair = CudaRepairManager(BASE_DIR / "training_runtime")
+        self._hardware = detect_hardware()
+        self._notifications: list[dict] = []
+        self._last_generated: str | None = None
+        self._update_cache: dict | None = None
         self._notify(
             "Sprzęt wykryty",
-            self.hardware.note,
-            "success" if self.hardware.torch_cuda_available else ("warning" if self.hardware.gpu_detected else "info"),
+            self._hardware.note,
+            "success" if self._hardware.torch_cuda_available else ("warning" if self._hardware.gpu_detected else "info"),
         )
 
-    def attach_window(self, window) -> None:
-        self.window = window
-
     def _notify(self, title: str, message: str, level: str = "info") -> None:
-        self.notifications.insert(0, {
+        self._notifications.insert(0, {
             "id": f"n{datetime.now().timestamp()}",
             "title": title,
             "message": message,
@@ -62,26 +58,26 @@ class SoundCoreApi:
             "time": datetime.now().strftime("%H:%M"),
             "read": False,
         })
-        self.notifications = self.notifications[:40]
+        self._notifications = self._notifications[:40]
 
     def get_state(self) -> dict:
         profiles = self._profiles_payload()
         return {
             "version": APP_VERSION,
             "user": {"name": getpass.getuser(), "role": "Użytkownik"},
-            "hardware": self.hardware.to_dict(),
+            "hardware": self._hardware.to_dict(),
             "profiles": profiles,
             "devices": self.get_devices(),
-            "notifications": self.notifications,
-            "training": self.training.status(),
-            "last_generated": self.last_generated,
-            "cuda_repair": self.cuda_repair.status(),
+            "notifications": self._notifications,
+            "training": self._training.status(),
+            "last_generated": self._last_generated,
+            "cuda_repair": self._cuda_repair.status(),
         }
 
     def refresh_hardware(self) -> dict:
-        self.hardware = detect_hardware()
-        self._notify("Ponowne wykrywanie GPU", self.hardware.note, "success" if self.hardware.torch_cuda_available else "warning")
-        return self.hardware.to_dict()
+        self._hardware = detect_hardware()
+        self._notify("Ponowne wykrywanie GPU", self._hardware.note, "success" if self._hardware.torch_cuda_available else "warning")
+        return self._hardware.to_dict()
 
     def get_devices(self) -> list[dict]:
         result = []
@@ -94,7 +90,7 @@ class SoundCoreApi:
 
     def _profiles_payload(self) -> list[dict]:
         rows = []
-        for p in self.profile_manager.list_profiles():
+        for p in self._profile_manager.list_profiles():
             stats = get_stats(p.folder)
             rows.append({
                 "name": p.name,
@@ -106,10 +102,10 @@ class SoundCoreApi:
         return rows
 
     def notifications_state(self) -> list[dict]:
-        return self.notifications
+        return self._notifications
 
     def mark_notifications_read(self) -> dict:
-        for n in self.notifications:
+        for n in self._notifications:
             n["read"] = True
         return {"ok": True}
 
@@ -120,12 +116,12 @@ class SoundCoreApi:
         duration = max(5, min(int(duration), 120))
         audio = record_audio(duration=duration, device=int(device_index))
         cleaned = preprocess_pipeline(audio, DEFAULT_SAMPLERATE)
-        profile = self.profile_manager.save_profile(name, cleaned, DEFAULT_SAMPLERATE, overwrite=True)
+        profile = self._profile_manager.save_profile(name, cleaned, DEFAULT_SAMPLERATE, overwrite=True)
         self._notify("Profil zapisany", f"Profil '{name}' jest gotowy do użycia.", "success")
         return {"ok": True, "profile": profile.name, "duration": profile.duration_seconds, "profiles": self._profiles_payload()}
 
     def record_training_sample(self, profile_name: str, text: str, duration: int, device_index: int) -> dict:
-        profile = self.profile_manager.get_profile(profile_name)
+        profile = self._profile_manager.get_profile(profile_name)
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
         duration = max(3, min(int(duration), 30))
@@ -137,19 +133,19 @@ class SoundCoreApi:
         return {"ok": True, "sample": sample, "dataset": stats.to_dict()}
 
     def play_profile(self, profile_name: str) -> dict:
-        profile = self.profile_manager.get_profile(profile_name)
+        profile = self._profile_manager.get_profile(profile_name)
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
         threading.Thread(target=lambda: play_wav(profile.wav_path), daemon=True).start()
         return {"ok": True}
 
     def delete_profile(self, profile_name: str) -> dict:
-        self.profile_manager.delete_profile(profile_name)
+        self._profile_manager.delete_profile(profile_name)
         self._notify("Profil usunięty", f"Usunięto profil '{profile_name}'.", "info")
         return {"ok": True, "profiles": self._profiles_payload()}
 
     def synthesize(self, text: str, profile_name: str, language: str = "pl", use_rvc: bool = False) -> dict:
-        profile = self.profile_manager.get_profile(profile_name)
+        profile = self._profile_manager.get_profile(profile_name)
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
         if not text.strip():
@@ -158,34 +154,34 @@ class SoundCoreApi:
             raise ValueError("Profil nie ma podpiętego modelu RVC.")
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         raw = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_raw.wav"
-        self.engine.clone_and_speak(text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language)
+        self._engine.clone_and_speak(text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language)
         final = raw
         if use_rvc:
             rvc = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_rvc.wav"
-            self.rvc_engine.load_model(profile.rvc_model_path, profile.rvc_index_path)
-            self.rvc_engine.convert(str(raw), str(rvc))
+            self._rvc_engine.load_model(profile.rvc_model_path, profile.rvc_index_path)
+            self._rvc_engine.convert(str(raw), str(rvc))
             final = rvc
-        self.last_generated = str(final)
+        self._last_generated = str(final)
         self._notify("Synteza zakończona", f"Gotowy plik: {final.name}", "success")
         return {"ok": True, "path": str(final), "name": final.name}
 
     def play_last_generated(self) -> dict:
-        if not self.last_generated or not os.path.isfile(self.last_generated):
+        if not self._last_generated or not os.path.isfile(self._last_generated):
             raise ValueError("Brak wygenerowanego pliku.")
-        threading.Thread(target=lambda: play_wav(self.last_generated), daemon=True).start()
+        threading.Thread(target=lambda: play_wav(self._last_generated), daemon=True).start()
         return {"ok": True}
 
 
     def cuda_repair_status(self) -> dict:
-        return self.cuda_repair.status()
+        return self._cuda_repair.status()
 
     def install_cuda_runtime(self) -> dict:
-        self.hardware = detect_hardware()
-        if not self.hardware.gpu_detected:
+        self._hardware = detect_hardware()
+        if not self._hardware.gpu_detected:
             raise RuntimeError("Nie wykryto karty NVIDIA. Instalacja PyTorch CUDA nie ma sensu.")
-        if self.hardware.torch_cuda_available:
+        if self._hardware.torch_cuda_available:
             return {"state": "completed", "progress": 100, "message": "CUDA jest już aktywna.", "restart_required": False}
-        status = self.cuda_repair.start()
+        status = self._cuda_repair.start()
         self._notify("Naprawa CUDA", "Rozpoczęto instalację oficjalnego PyTorch 2.5.1 z CUDA 12.4. SoundCore może działać w tle podczas pobierania.", "info")
         return status
 
@@ -195,7 +191,7 @@ class SoundCoreApi:
         return {"ok": True}
 
     def start_training(self, profile_name: str, language: str, epochs: int, device: str, batch_size: int = 2) -> dict:
-        profile = self.profile_manager.get_profile(profile_name)
+        profile = self._profile_manager.get_profile(profile_name)
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
         stats = get_stats(profile.folder)
@@ -203,23 +199,23 @@ class SoundCoreApi:
             raise ValueError("Dodaj co najmniej 3 próbki treningowe. Dla sensownego modelu zalecane jest 10–15 minut lub więcej.")
         requested = (device or "auto").lower()
         if requested == "auto":
-            requested = "gpu" if self.hardware.torch_cuda_available else "cpu"
-        status = self.training.start(profile.folder, profile.name, language or "pl", int(epochs), requested, int(batch_size))
+            requested = "gpu" if self._hardware.torch_cuda_available else "cpu"
+        status = self._training.start(profile.folder, profile.name, language or "pl", int(epochs), requested, int(batch_size))
         self._notify("Trening uruchomiony", f"Profil {profile_name}, urządzenie: {requested.upper()}.", "success")
         return status
 
     def training_status(self) -> dict:
-        return self.training.status()
+        return self._training.status()
 
     def stop_training(self) -> dict:
-        data = self.training.stop()
+        data = self._training.stop()
         self._notify("Trening zatrzymany", "Proces treningowy został zatrzymany.", "warning")
         return data
 
     def check_updates(self) -> dict:
         try:
             result = check_for_update(APP_VERSION, CHANNEL_URL)
-            self.update_cache = result
+            self._update_cache = result
             if result["update_available"]:
                 self._notify("Dostępna aktualizacja", f"SoundCore {result['latest_version']} jest gotowy do pobrania.", "success")
             else:
@@ -230,11 +226,11 @@ class SoundCoreApi:
             return {"ok": False, "error": str(exc), "current_version": APP_VERSION}
 
     def install_update(self) -> dict:
-        if not self.update_cache or not self.update_cache.get("update_available"):
-            self.update_cache = self.check_updates()
-        if not self.update_cache.get("update_available"):
+        if not self._update_cache or not self._update_cache.get("update_available"):
+            self._update_cache = self.check_updates()
+        if not self._update_cache.get("update_available"):
             return {"ok": True, "message": "Brak aktualizacji."}
-        payload = download_update(self.update_cache["channel"])
+        payload = download_update(self._update_cache["channel"])
         self._notify("Aktualizacja pobrana", "SHA256 poprawne. SoundCore uruchomi instalator i zrestartuje aplikację.", "success")
         launch_apply(payload["payload"], str(BASE_DIR))
         threading.Timer(0.8, lambda: os._exit(0)).start()
@@ -246,13 +242,35 @@ def run() -> None:
     window = webview.create_window(
         "SoundCore",
         str(WEBUI_DIR / "index.html"),
-        js_api=api,
         width=1540,
         height=930,
         min_size=(1180, 720),
         background_color="#F6F8FC",
     )
-    api.attach_window(window)
+    # Do not pass a Python object as js_api. pywebview reflects object attributes
+    # and on Windows this can walk into native WinForms/WebView2 COM objects.
+    # Expose an explicit allow-list of plain bound methods only.
+    window.expose(
+        api.get_state,
+        api.refresh_hardware,
+        api.get_devices,
+        api.notifications_state,
+        api.mark_notifications_read,
+        api.record_profile,
+        api.record_training_sample,
+        api.play_profile,
+        api.delete_profile,
+        api.synthesize,
+        api.play_last_generated,
+        api.cuda_repair_status,
+        api.install_cuda_runtime,
+        api.restart_app,
+        api.start_training,
+        api.training_status,
+        api.stop_training,
+        api.check_updates,
+        api.install_update,
+    )
     webview.start(debug=False)
 
 
