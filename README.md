@@ -1,3 +1,5 @@
+> Current release: **0.5.5**
+
 # SoundCore – AI SoundSystem
 
 Aplikacja desktopowa (Python) do klonowania głosu i syntezy mowy (TTS).

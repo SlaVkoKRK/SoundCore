@@ -1,3 +1,13 @@
+# SoundCore 0.5.5
+
+## Stabilne odtwarzanie A/B
+
+- Jeden zarządzany odtwarzacz audio dla całej aplikacji.
+- Nowy odsłuch A/B, historii, profilu lub ostatniej syntezy bezpiecznie zatrzymuje poprzedni.
+- Usunięto równoległe `sd.play()/sd.wait()` z wielu wątków, które mogły crashować PortAudio/aplikację.
+- Przełączanie A ↔ B jest responsywne i nie tworzy nakładających się strumieni.
+- Błędy urządzenia audio podczas samego odsłuchu nie wywracają procesu GUI.
+
 # SoundCore 0.5.4
 
 - przebudowane Studio Syntezy: model aktywny/bazowy/wytrenowany, styl, tempo, RVC i zapis WAV,

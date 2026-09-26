@@ -146,8 +146,90 @@ def save_wav(audio: np.ndarray, path: str, samplerate: int = DEFAULT_SAMPLERATE)
     sf.write(path, audio, samplerate)
 
 
+_PLAYBACK_STATE_LOCK = threading.RLock()
+_PLAYBACK_TRANSITION_LOCK = threading.Lock()
+_PLAYBACK_CURRENT = None
+
+
+class _PlaybackSession:
+    def __init__(self) -> None:
+        self.stop_event = threading.Event()
+        self.done_event = threading.Event()
+        self.stream = None
+
+
+def stop_playback(timeout: float = 1.0) -> None:
+    """Safely stop the currently active SoundCore playback, if any."""
+    global _PLAYBACK_CURRENT
+    with _PLAYBACK_STATE_LOCK:
+        current = _PLAYBACK_CURRENT
+        if current is None:
+            return
+        current.stop_event.set()
+    # Let the owning playback thread close PortAudio itself. This avoids
+    # racing stream.close()/stream.write() from two different threads.
+    current.done_event.wait(max(0.0, float(timeout)))
+
+
 def play_wav(path: str) -> None:
-    """Odtwarza plik .wav (blokująco)."""
-    data, samplerate = sf.read(path, dtype="float32")
-    sd.play(data, samplerate)
-    sd.wait()
+    """Play one WAV safely; a new playback always replaces the previous one."""
+    global _PLAYBACK_CURRENT
+
+    data, samplerate = sf.read(path, dtype="float32", always_2d=True)
+    if data.size == 0:
+        return
+    channels = int(data.shape[1])
+
+    session = _PlaybackSession()
+
+    # Starting/stopping playback is serialized. The previous owner gets a
+    # chance to close its own stream before a new PortAudio stream is opened.
+    with _PLAYBACK_TRANSITION_LOCK:
+        with _PLAYBACK_STATE_LOCK:
+            previous = _PLAYBACK_CURRENT
+            if previous is not None:
+                previous.stop_event.set()
+        if previous is not None:
+            previous.done_event.wait(1.0)
+
+        stream = sd.OutputStream(
+            samplerate=int(samplerate),
+            channels=channels,
+            dtype="float32",
+            blocksize=1024,
+        )
+        session.stream = stream
+        with _PLAYBACK_STATE_LOCK:
+            _PLAYBACK_CURRENT = session
+        stream.start()
+
+    try:
+        # Small chunks make A/B switching responsive without issuing
+        # concurrent PortAudio calls from multiple playback threads.
+        chunk_frames = 1024
+        offset = 0
+        total = int(data.shape[0])
+        while offset < total and not session.stop_event.is_set():
+            end = min(total, offset + chunk_frames)
+            stream.write(data[offset:end])
+            offset = end
+    except Exception:
+        # If a device disappears or another audio operation interrupts the
+        # stream, keep the error local to playback instead of crashing the UI.
+        pass
+    finally:
+        try:
+            if session.stop_event.is_set():
+                stream.abort()
+            else:
+                stream.stop()
+        except Exception:
+            pass
+        try:
+            stream.close()
+        except Exception:
+            pass
+        with _PLAYBACK_STATE_LOCK:
+            if _PLAYBACK_CURRENT is session:
+                _PLAYBACK_CURRENT = None
+        session.done_event.set()
