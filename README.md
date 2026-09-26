@@ -259,3 +259,15 @@ Globalną wyszukiwarkę otwiera `Ctrl+K`. Wyszukuje moduły SoundCore i profile 
 
 ## Recording library and media import (0.3.8)
 Each voice profile now has its own recording library. SoundCore can import audio and video files, extract mono audio with FFmpeg, display a waveform, trim a selected range, preview it, and save only that clip into the profile dataset. Imported samples keep source/trim metadata and their transcript can be edited later.
+
+## Fast Start (0.3.9+)
+
+SoundCore uruchamia WebUI w pierwszej kolejności. Ciężkie biblioteki AI/audio nie blokują już pojawienia się okna:
+
+- GPU/CUDA i mikrofony są wykrywane w tle,
+- XTTS jest ładowany dopiero przy pierwszej syntezie,
+- RVC dopiero po jego użyciu,
+- SciPy/NumPy/sounddevice są importowane dopiero przez funkcje, które ich potrzebują,
+- ostatni stan sprzętu jest przechowywany lokalnie w `cache/hardware.json`.
+
+Na pulpicie aplikacji pasek usług pokazuje bieżący stan inicjalizacji komponentów.

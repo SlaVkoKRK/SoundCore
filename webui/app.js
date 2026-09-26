@@ -18,6 +18,31 @@ async function loadPrompt(targetId,metaId,duration,purpose,profileName=''){
 }
 
 function api(method,...args){if(!window.pywebview?.api?.[method])return Promise.reject(new Error(`API ${method} niedostępne`));return window.pywebview.api[method](...args)}
+
+let startupTimer=null,startupLast='';
+function renderStartupServices(payload){
+  const services=payload?.services||state.services||{};
+  Object.entries(services).forEach(([key,v])=>{
+    const el=document.querySelector(`[data-service="${key}"]`); if(!el)return;
+    el.className=`startup-service ${v.state||'pending'}`;
+    const b=el.querySelector('b'), sm=el.querySelector('small');
+    if(b)b.textContent=v.label||key; if(sm)sm.textContent=v.message||'';
+  });
+  const busy=Object.values(services).some(v=>v.state==='loading'||v.state==='pending');
+  if($('summaryStatus'))$('summaryStatus').textContent=busy?'Uruchamianie usług…':'System gotowy';
+  if($('summaryStatusSub'))$('summaryStatusSub').textContent=busy?'Ciężkie moduły ładują się w tle':'SoundCore działa lokalnie';
+}
+async function pollStartup(){
+  try{
+    const r=await api('startup_status');
+    const sig=JSON.stringify(r.services||{});
+    if(sig!==startupLast){startupLast=sig; state.services=r.services||{}; renderStartupServices(r)}
+    if(r.ready){
+      clearInterval(startupTimer);startupTimer=null;
+      state=await api('get_state');renderState();renderStartupServices({services:state.services});
+    }
+  }catch(e){}
+}
 function toast(title,msg,level='info'){const t=document.createElement('div');t.className='toast';t.innerHTML=`<b>${esc(title)}</b><p>${esc(msg)}</p>`;$('toastHost').appendChild(t);setTimeout(()=>t.remove(),4200)}
 function showPage(name){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===name));$(`page-${name}`).classList.add('active');$('pageTitle').textContent=pages[name][0];$('pageSubtitle').textContent=pages[name][1]}
 function renderNotifications(){const rows=state.notifications||[];const unread=rows.filter(n=>!n.read).length;$('bellBadge').textContent=unread;$('bellBadge').classList.toggle('hidden',!unread);$('bellBtn').classList.toggle('has-unread',!!unread);$('notificationSummary').textContent=unread?`${unread} nowych`:'Brak nowych';$('notificationList').innerHTML=rows.length?rows.map(n=>`<div class="notification ${n.read?'':'unread'}"><span class="level ${esc(n.level)}"></span><div><b>${esc(n.title)}</b><p>${esc(n.message)}</p></div><time>${esc(n.time)}</time></div>`).join(''):'<div class="status-box" style="margin:14px">Brak powiadomień.</div>'}
@@ -59,7 +84,7 @@ function renderCudaRepair(r){
   $('restartAfterCuda').classList.toggle('hidden',!(r.restart_required && !cudaReady));
 }
 function updateDatasetStats(){const p=(state.profiles||[]).find(x=>x.name===$('trainProfile').value)||(state.profiles||[])[0];$('trainSampleCount').textContent=p?.dataset.samples||0;$('trainDuration').textContent=`${p?.dataset.duration_minutes||0} min`;$('dashTrainDataset').textContent=`${p?.dataset.duration_minutes||0} min`}
-function renderState(){const u=state.user||{};const initial=(u.name||'U')[0].toUpperCase();$('userName').textContent=u.name||'Użytkownik';$('userRole').textContent=u.role||'Lokalny profil';$('userAvatar').textContent=initial;$('userMenuAvatar').textContent=initial;$('userMenuName').textContent=u.name||'Użytkownik';$('userMenuVersion').textContent=`SoundCore v${state.version||'—'}`;$('settingsUser').textContent=u.name||'—';$('settingsVersion').textContent=state.version;$('sidebarVersion').textContent=`v${state.version}`;$('currentVersion').textContent=`v${state.version}`;$('updatesCurrent').textContent=`v${state.version}`;renderHardware();renderDevices();renderProfiles();renderNotifications();renderTraining(state.training);renderCudaRepair(state.cuda_repair)}
+function renderState(){const u=state.user||{};const initial=(u.name||'U')[0].toUpperCase();$('userName').textContent=u.name||'Użytkownik';$('userRole').textContent=u.role||'Lokalny profil';$('userAvatar').textContent=initial;$('userMenuAvatar').textContent=initial;$('userMenuName').textContent=u.name||'Użytkownik';$('userMenuVersion').textContent=`SoundCore v${state.version||'—'}`;$('settingsUser').textContent=u.name||'—';$('settingsVersion').textContent=state.version;$('sidebarVersion').textContent=`v${state.version}`;$('currentVersion').textContent=`v${state.version}`;$('updatesCurrent').textContent=`v${state.version}`;renderHardware();renderDevices();renderProfiles();renderNotifications();renderTraining(state.training);renderCudaRepair(state.cuda_repair);renderStartupServices({services:state.services||{}})}
 async function refreshState(){try{state=await api('get_state');renderState()}catch(e){toast('Błąd uruchomienia',e.message,'error')}}
 async function refreshTraining(){try{renderTraining(await api('training_status'))}catch(e){}}
 async function refreshCuda(){try{const r=await api('cuda_repair_status');state.cuda_repair=r;if(r.torch_cuda_available){state.hardware=await api('refresh_hardware');renderHardware()}renderCudaRepair(r);if(['completed','verified','error'].includes(r.state)){clearInterval(cudaTimer);cudaTimer=null}}catch(e){}}
@@ -163,7 +188,7 @@ function wire(){
 
 const synth=async dash=>{const text=dash?$('dashText').value:$('synthText').value,profile=dash?$('dashProfile').value:$('synthProfile').value,lang=dash?$('dashLanguage').value:$('synthLanguage').value,rvc=dash?false:$('synthRvc').checked,btn=dash?$('dashGenerate'):$('synthGenerate');try{btn.disabled=true;const old=btn.textContent;btn.dataset.old=old;btn.textContent='Generowanie…';const r=await api('synthesize',text,profile,lang,rvc);$('playerStatus').textContent=r.name;$('synthResult').textContent=`Gotowe: ${r.path}`;toast('Synteza gotowa',r.name,'success');await refreshState()}catch(e){toast('Synteza',e.message,'error');$('synthResult').textContent=e.message}finally{btn.disabled=false;btn.textContent=btn.dataset.old||'Generuj'}};$('dashGenerate').onclick=()=>synth(true);$('synthGenerate').onclick=()=>synth(false);['dashPlay','playerPlay','synthPlay'].forEach(id=>$(id).onclick=async()=>{try{await api('play_last_generated')}catch(e){toast('Odtwarzanie',e.message,'error')}});$('refreshGpu').onclick=async()=>{try{state.hardware=await api('refresh_hardware');renderHardware();toast('GPU',state.hardware.note,state.hardware.torch_cuda_available?'success':'info')}catch(e){toast('GPU',e.message,'error')}};$('cudaInstallQuick').onclick=$('installCudaBtn').onclick=startCudaRepair;$('restartAfterCuda').onclick=async()=>{await api('restart_app')};$('startTraining').onclick=async()=>{try{renderTraining(await api('start_training',$('trainProfile').value,'pl',Number($('trainEpochs').value),$('trainCompute').value,Number($('trainBatch').value)));toast('Trening','Uruchomiono GPTTrainer','success')}catch(e){toast('Trening',e.message,'error')}};$('stopTraining').onclick=$('dashStopTraining').onclick=async()=>{try{renderTraining(await api('stop_training'));toast('Trening','Zatrzymano trening','info')}catch(e){toast('Trening',e.message,'error')}};
 const check=async()=>{try{$('checkUpdates').disabled=true;$('updateStatus').textContent='Sprawdzanie kanału GitHub…';updateInfo=await api('check_updates');if(!updateInfo.ok)throw new Error(updateInfo.error);$('latestVersion').textContent=`v${updateInfo.latest_version}`;$('updatesLatest').textContent=`v${updateInfo.latest_version}`;$('latestState').textContent=updateInfo.update_available?'Dostępna aktualizacja':'Masz najnowszą wersję';$('installUpdate').disabled=!updateInfo.update_available;$('updateStatus').textContent=updateInfo.update_available?`Dostępna wersja ${updateInfo.latest_version}.`:'Masz najnowszą wersję SoundCore.';state.notifications=await api('notifications_state');renderNotifications()}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacje',e.message,'error')}finally{$('checkUpdates').disabled=false}};$('checkUpdates').onclick=$('dashCheckUpdates').onclick=check;$('installUpdate').onclick=async()=>{if(!confirm('Pobrać i zainstalować aktualizację z GitHuba?'))return;try{$('installUpdate').disabled=true;$('updateStatus').textContent='Pobieranie i weryfikacja SHA256…';const r=await api('install_update');if(r.restarting)$('updateStatus').textContent='Aktualizacja gotowa. Restart…'}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacja',e.message,'error');$('installUpdate').disabled=false}}}
-window.addEventListener('pywebviewready',async()=>{wire();await refreshState();await hydrateUserMenu();await Promise.all([loadPrompt('profileReadingText','profilePromptMeta',$('profileDuration').value,'profile'),loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training',$('trainProfile').value),loadPrompt('trainProfileReadingText','trainProfilePromptMeta',$('trainProfileDuration').value,'profile')]);trainingTimer=setInterval(refreshTraining,1800);if(['starting','installing'].includes(state.cuda_repair?.state))cudaTimer=setInterval(refreshCuda,1500)});
+window.addEventListener('pywebviewready',async()=>{wire();await refreshState();await hydrateUserMenu();api('start_background_services').catch(()=>{});startupTimer=setInterval(pollStartup,650);pollStartup();Promise.all([loadPrompt('profileReadingText','profilePromptMeta',$('profileDuration').value,'profile'),loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training',$('trainProfile').value),loadPrompt('trainProfileReadingText','trainProfilePromptMeta',$('trainProfileDuration').value,'profile')]);trainingTimer=setInterval(refreshTraining,1800);if(['starting','installing'].includes(state.cuda_repair?.state))cudaTimer=setInterval(refreshCuda,1500)});
 
 // SoundCore 0.3.8 - recording library + audio/video trim editor
 let mediaSession=null;

@@ -79,6 +79,15 @@
         <article class="summary-card"><div class="summary-icon mint">✓</div><div><span>Status</span><b id="summaryStatus">System gotowy</b><small id="summaryStatusSub">SoundCore działa lokalnie</small></div><span class="status-dot"></span></article>
       </div>
 
+      <div id="startupServices" class="startup-services">
+        <div class="startup-service ready" data-service="interface"><span></span><b>Interfejs</b><small>Gotowy</small></div>
+        <div class="startup-service pending" data-service="hardware"><span></span><b>GPU</b><small>Oczekuje</small></div>
+        <div class="startup-service pending" data-service="audio"><span></span><b>Audio</b><small>Oczekuje</small></div>
+        <div class="startup-service pending" data-service="profiles"><span></span><b>Profile</b><small>Oczekuje</small></div>
+        <div class="startup-service lazy" data-service="xtts"><span></span><b>XTTS</b><small>Przy pierwszej syntezie</small></div>
+        <div class="startup-service lazy" data-service="rvc"><span></span><b>RVC</b><small>Na żądanie</small></div>
+      </div>
+
       <div id="cudaBanner" class="cuda-banner hidden">
         <div class="cuda-banner-icon">⚡</div>
         <div><b>RTX wykryty, ale PyTorch nie ma aktywnej CUDA</b><p id="cudaBannerText">SoundCore może automatycznie doinstalować zgodny build PyTorch z CUDA 12.4.</p></div>
