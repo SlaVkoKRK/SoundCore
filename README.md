@@ -271,3 +271,7 @@ SoundCore uruchamia WebUI w pierwszej kolejności. Ciężkie biblioteki AI/audio
 - ostatni stan sprzętu jest przechowywany lokalnie w `cache/hardware.json`.
 
 Na pulpicie aplikacji pasek usług pokazuje bieżący stan inicjalizacji komponentów.
+
+## Windows installer
+
+Official releases can include `SoundCore-Setup-<version>.exe`. The installer creates a per-user installation in `%LOCALAPPDATA%\Programs\SoundCore`, prepares Python 3.10 and the virtual environment, installs WebView2 and SoundCore dependencies, detects NVIDIA CUDA support, and creates Start menu / desktop shortcuts. Subsequent application updates continue to use SoundCore's built-in GitHub updater.

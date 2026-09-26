@@ -1,0 +1,58 @@
+name: Build Windows Installer
+
+on:
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: write
+
+jobs:
+  build-installer:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Read version
+        id: version
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          "version=$v" >> $env:GITHUB_OUTPUT
+          Write-Host "Building SoundCore $v"
+
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Build installer
+        shell: pwsh
+        run: |
+          $iscc = "C:\Program Files (x86)\Inno Setup 6\ISCC.exe"
+          if (!(Test-Path $iscc)) { throw "ISCC.exe not found" }
+          & $iscc "/DMyAppVersion=${{ steps.version.outputs.version }}" "installer\SoundCore.iss"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $file = "installer\output\SoundCore-Setup-${{ steps.version.outputs.version }}.exe"
+          if (!(Test-Path $file)) { throw "Installer not created: $file" }
+          Get-FileHash $file -Algorithm SHA256 | Format-List
+
+      - name: Upload workflow artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SoundCore-Setup-${{ steps.version.outputs.version }}
+          path: installer/output/SoundCore-Setup-${{ steps.version.outputs.version }}.exe
+          if-no-files-found: error
+
+      - name: Attach installer to GitHub Release
+        if: github.event_name == 'release'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "${{ github.event.release.tag_name }}" "installer\output\SoundCore-Setup-${{ steps.version.outputs.version }}.exe" --clobber

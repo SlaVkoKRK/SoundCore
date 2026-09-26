@@ -1,14 +1,17 @@
-# SoundCore 0.3.9
+# SoundCore 0.4.0
 
-Fast Start: interfejs pojawia się natychmiast, a ciężkie komponenty są inicjalizowane poza krytyczną ścieżką uruchamiania.
+## Windows installer
 
-## Zmiany
-- usunięto import NumPy / SciPy / sounddevice / Torch / XTTS / RVC z krytycznej ścieżki startu
-- GPU i CUDA są wykrywane w tle po pokazaniu WebUI
-- mikrofony są wykrywane w tle
-- pełne statystyki datasetów profili są odświeżane w tle
-- XTTS jest tworzony dopiero przy pierwszej syntezie
-- RVC jest tworzony dopiero po faktycznym włączeniu RVC
-- ostatni wykryty sprzęt jest cache'owany w `cache/hardware.json`, dzięki czemu dashboard może od razu pokazać poprzedni stan
-- nowy pasek statusów usług: Interfejs / GPU / Audio / Profile / XTTS / RVC
-- dashboard aktualizuje się automatycznie, kiedy usługi tła kończą inicjalizację
+- Added a native Windows installer project based on Inno Setup.
+- GitHub Actions automatically builds `SoundCore-Setup-<version>.exe` when a GitHub Release is published.
+- Per-user installation to `%LOCALAPPDATA%\Programs\SoundCore` without requiring administrator rights for SoundCore itself.
+- Automatic Python 3.10 environment creation and dependency installation.
+- Automatic Microsoft WebView2 Runtime bootstrap.
+- NVIDIA GPU detection with PyTorch CUDA 12.4 installation and CPU fallback.
+- Desktop and Start menu shortcuts with the SoundCore icon.
+- Existing voice profiles and user recordings are not removed by normal application updates.
+- The installer verifies the Python runtime before finishing.
+
+## Distribution
+
+The regular SoundCore release/update package remains unchanged. The installer is an additional GitHub Release asset intended for clean installations on new Windows systems.
