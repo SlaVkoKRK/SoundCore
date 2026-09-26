@@ -299,3 +299,8 @@ Windows installer uses Python 3.10 with numpy 1.22.0, scipy 1.11.4 and TTS 0.22.
 ## SoundCore 0.5.0
 
 Wersja 0.5.0 rozwija cały workflow od zbierania datasetu do użycia wytrenowanego głosu. Sesja ciągła pozwala nagrywać tekst po tekście bez ręcznego uruchamiania każdej próbki. GPTTrainer raportuje do WebUI realną epokę, krok, loss, learning rate, historię wykresu oraz log techniczny zapisany również w profilu. Po zakończeniu fine-tuningu checkpoint można jednym przyciskiem podpiąć pod profil lub wrócić do bazowego XTTS v2. Aktualizacje są sprawdzane przez GitHub API i przygotowywane w tle przed restartem aplikacji.
+
+
+## SoundCore 0.5.2
+
+Wersja 0.5.2 poprawia ładowanie wytrenowanych modeli XTTS i zachowanie długich operacji UI. Fine-tunowany profil odtwarza wymagane ścieżki bazowych assetów XTTS przed inference, a synteza ponownie wyszukuje aktualny checkpoint na dysku. Aktualizacje są prezentowane jako nieblokująca karta w tle z realnym anulowaniem, a klawisz `Esc` służy do przerywania nagrywania i aktywnych okien/overlayów.

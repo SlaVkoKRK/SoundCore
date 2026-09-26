@@ -1,3 +1,14 @@
+# SoundCore 0.5.2
+
+- Naprawiono ładowanie aktywnego fine-tunowanego XTTS: przed `Xtts.init_from_config()` SoundCore odnajduje lokalny katalog `XTTS_v2_original_model_files` i uzupełnia brakujące/stare ścieżki `dvae.pth`, `mel_stats.pth`, `vocab.json` i `model.pth`.
+- Synteza nie ufa już starym absolutnym ścieżkom z `metadata.json`; aktywny checkpoint/config/vocab są ponownie rozwiązywane z dysku dla profilu.
+- Błąd ładowania wytrenowanego XTTS pokazuje teraz etap i typ wyjątku zamiast samego `NoneType`.
+- Aktualizacja działa w nieblokującej, pływającej karcie; reszta aplikacji pozostaje klikalna.
+- Dodano realne anulowanie pobierania aktualizacji (`Przerwij` / `Esc`) oraz możliwość schowania karty przyciskiem `×` bez przerywania aktualizacji.
+- Pasek aktualizacji raportuje rzeczywisty postęp pobierania w MB, gdy GitHub podaje rozmiar paczki.
+- `Esc` zamyka/przerywa aktywne elementy UI: nagrywanie, edytor mediów, aktualizację, menu/panele i kreator profilu.
+- Nagrywanie można przerwać w odliczaniu albo w trakcie mikrofonu; backend zatrzymuje `sounddevice` i nie zapisuje anulowanej próbki.
+
 # SoundCore 0.5.1
 
 - Naprawiono błąd finalizacji treningu `expected str, bytes or os.PathLike object, not NoneType`.

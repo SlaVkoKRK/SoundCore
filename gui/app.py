@@ -21,7 +21,7 @@ from storage.profile_manager import ProfileManager
 from system.cuda_manager import CudaRepairManager
 from system.windows_integration import prepare_windows_process, setup_windows_shell_async
 from training.manager import TrainingManager
-from updater.update_manager import check_for_update, download_update, launch_apply
+from updater.update_manager import UpdateCancelled, check_for_update, download_update, launch_apply
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 WEBUI_DIR = BASE_DIR / "webui"
@@ -87,6 +87,7 @@ class SoundCoreApi:
         self._last_generated: str | None = None
         self._update_cache: dict | None = None
         self._update_install_status: dict = {"state": "idle", "progress": 0, "message": "Brak aktywnej aktualizacji."}
+        self._update_cancel = threading.Event()
 
     def _notify(self, title: str, message: str, level: str = "info") -> None:
         self._notifications.insert(0, {
@@ -297,11 +298,14 @@ class SoundCoreApi:
         raw = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_raw.wav"
         trained_model = None
         if getattr(profile, "xtts_mode", "base") == "trained":
-            trained_model = {
-                "checkpoint_path": profile.xtts_checkpoint_path,
-                "config_path": profile.xtts_config_path,
-                "vocab_path": profile.xtts_vocab_path,
-            }
+            # Resolve the files from disk every time instead of trusting stale
+            # absolute paths saved in metadata.json by an older release/run.
+            trained_model = self._profile_manager.find_trained_xtts(profile_name)
+            if not trained_model:
+                raise FileNotFoundError(
+                    "Profil ma ustawiony wytrenowany XTTS, ale nie znaleziono kompletnego checkpointu/config/vocab. "
+                    "Przełącz profil na bazowy XTTS albo ponownie aktywuj wytrenowany model."
+                )
         self._engine.clone_and_speak(text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language, trained_model=trained_model)
         final = raw
         self._services["xtts"].update(state="ready", message=("Wytrenowany model profilu" if trained_model else "Bazowy XTTS v2"))
@@ -549,13 +553,33 @@ class SoundCoreApi:
 
     def _install_update_worker(self) -> None:
         try:
-            self._update_install_status = {"state": "downloading", "progress": 20, "message": "Pobieranie paczki aktualizacji…"}
-            payload = download_update(self._update_cache["channel"])
-            self._update_install_status = {"state": "verified", "progress": 70, "message": "SHA256 poprawne. Przygotowanie aktualizacji…"}
+            self._update_install_status = {"state": "downloading", "progress": 8, "message": "Pobieranie paczki aktualizacji…"}
+
+            def on_progress(done: int, total: int, frac: float) -> None:
+                progress = 8 + int(max(0.0, min(1.0, frac)) * 62) if total else 25
+                if total:
+                    mb_done = done / (1024 * 1024)
+                    mb_total = total / (1024 * 1024)
+                    message = f"Pobieranie aktualizacji… {mb_done:.1f} / {mb_total:.1f} MB"
+                else:
+                    message = f"Pobieranie aktualizacji… {done / (1024 * 1024):.1f} MB"
+                self._update_install_status = {"state": "downloading", "progress": progress, "message": message}
+
+            payload = download_update(
+                self._update_cache["channel"],
+                on_progress=on_progress,
+                cancel_event=self._update_cancel,
+            )
+            if self._update_cancel.is_set():
+                raise UpdateCancelled("Aktualizacja została przerwana przez użytkownika.")
+            self._update_install_status = {"state": "verified", "progress": 78, "message": "SHA256 poprawne. Przygotowanie aktualizacji…"}
             self._notify("Aktualizacja pobrana", "SHA256 poprawne. Przygotowuję restart SoundCore.", "success")
             launch_apply(payload["payload"], str(BASE_DIR))
             self._update_install_status = {"state": "restarting", "progress": 100, "message": "Aktualizacja gotowa. Restart SoundCore…"}
             threading.Timer(1.2, lambda: os._exit(0)).start()
+        except UpdateCancelled as exc:
+            self._update_install_status = {"state": "cancelled", "progress": 0, "message": str(exc)}
+            self._notify("Aktualizacja przerwana", str(exc), "warning")
         except Exception as exc:
             self._update_install_status = {"state": "error", "progress": 0, "message": str(exc)}
             self._notify("Błąd aktualizacji", str(exc), "error")
@@ -567,9 +591,22 @@ class SoundCoreApi:
             self._update_cache = self.check_updates()
         if not self._update_cache.get("update_available"):
             return {"ok": True, "state": "idle", "progress": 0, "message": "Brak aktualizacji."}
+        self._update_cancel.clear()
         self._update_install_status = {"state": "starting", "progress": 5, "message": "Uruchamianie aktualizacji w tle…"}
         threading.Thread(target=self._install_update_worker, name="SoundCoreUpdater", daemon=True).start()
         return {"ok": True, **self._update_install_status}
+
+    def cancel_update(self) -> dict:
+        state = self._update_install_status.get("state")
+        if state in {"starting", "downloading"}:
+            self._update_cancel.set()
+            self._update_install_status = {"state": "cancelling", "progress": self._update_install_status.get("progress", 0), "message": "Przerywanie aktualizacji…"}
+        return self.update_install_status()
+
+    def cancel_recording(self) -> dict:
+        from recorder.recorder import cancel_recording
+        cancel_recording()
+        return {"ok": True, "message": "Przerwano nagrywanie."}
 
 
 def run() -> None:
@@ -624,6 +661,8 @@ def run() -> None:
         api.check_updates,
         api.install_update,
         api.update_install_status,
+        api.cancel_update,
+        api.cancel_recording,
     )
     setup_windows_shell_async(BASE_DIR, APP_ICON)
     webview.start(debug=False)

@@ -20,6 +20,10 @@ DEFAULT_CHANNEL_URL = "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/mai
 PROTECTED_TOP_LEVEL = {"voice_profiles", "output", ".venv", "venv", ".git"}
 
 
+class UpdateCancelled(RuntimeError):
+    pass
+
+
 def _version_tuple(v: str) -> tuple[int, ...]:
     parts = []
     for p in str(v).strip().lstrip("v").split("."):
@@ -69,7 +73,7 @@ def _safe_extract_zip(zip_path: Path, dest: Path) -> None:
         zf.extractall(dest)
 
 
-def download_update(channel: dict) -> dict:
+def download_update(channel: dict, on_progress=None, cancel_event=None) -> dict:
     url = channel.get("package_url")
     expected = str(channel.get("sha256", "")).lower()
     if not url or not expected:
@@ -77,15 +81,33 @@ def download_update(channel: dict) -> dict:
     temp_dir = Path(tempfile.mkdtemp(prefix="soundcore-update-"))
     package = temp_dir / "soundcore_update.zip"
     req = urllib.request.Request(url, headers={"User-Agent": "SoundCore-Updater"})
-    with urllib.request.urlopen(req, timeout=60) as r, package.open("wb") as f:
-        shutil.copyfileobj(r, f)
-    actual = _sha256(package)
-    if actual != expected:
-        raise RuntimeError(f"SHA256 nie zgadza się. Oczekiwano {expected}, otrzymano {actual}.")
-    extract_dir = temp_dir / "payload"
-    extract_dir.mkdir()
-    _safe_extract_zip(package, extract_dir)
-    return {"temp_dir": str(temp_dir), "package": str(package), "payload": str(extract_dir), "sha256": actual}
+    try:
+        with urllib.request.urlopen(req, timeout=60) as r, package.open("wb") as f:
+            total = int(r.headers.get("Content-Length") or 0)
+            done = 0
+            while True:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise UpdateCancelled("Aktualizacja została przerwana przez użytkownika.")
+                chunk = r.read(1024 * 256)
+                if not chunk:
+                    break
+                f.write(chunk)
+                done += len(chunk)
+                if on_progress is not None:
+                    frac = (done / total) if total > 0 else 0.0
+                    on_progress(done, total, frac)
+        if cancel_event is not None and cancel_event.is_set():
+            raise UpdateCancelled("Aktualizacja została przerwana przez użytkownika.")
+        actual = _sha256(package)
+        if actual != expected:
+            raise RuntimeError(f"SHA256 nie zgadza się. Oczekiwano {expected}, otrzymano {actual}.")
+        extract_dir = temp_dir / "payload"
+        extract_dir.mkdir()
+        _safe_extract_zip(package, extract_dir)
+        return {"temp_dir": str(temp_dir), "package": str(package), "payload": str(extract_dir), "sha256": actual}
+    except Exception:
+        shutil.rmtree(temp_dir, ignore_errors=True)
+        raise
 
 
 def create_apply_helper(payload_dir: str, app_root: str | None = None) -> str:

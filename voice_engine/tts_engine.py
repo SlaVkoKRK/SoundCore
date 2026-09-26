@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import os
 import threading
+from pathlib import Path
 from dataclasses import dataclass
 from typing import Optional
 
@@ -116,8 +117,56 @@ class VoiceEngine:
                             raise FileNotFoundError(f"Brak pliku wytrenowanego XTTS ({label}): {path}")
                     config = XttsConfig()
                     config.load_json(config_path)
+
+                    # GPTTrainer stores references to base XTTS assets in its config.
+                    # Depending on Coqui version those fields may be missing/None or may
+                    # point at a temporary training location.  Xtts.load_checkpoint()
+                    # later opens them internally and a None value ends up as the very
+                    # unhelpful: "expected str, bytes or os.PathLike object, not NoneType".
+                    checkpoint_obj = Path(checkpoint_path).resolve()
+                    base_assets = None
+                    for parent in (checkpoint_obj.parent, *checkpoint_obj.parents):
+                        candidate = parent / "XTTS_v2_original_model_files"
+                        if candidate.is_dir():
+                            base_assets = candidate
+                            break
+                    if base_assets is None:
+                        raise FileNotFoundError(
+                            "Nie znaleziono katalogu XTTS_v2_original_model_files obok wytrenowanego checkpointu."
+                        )
+
+                    required_base = {
+                        "dvae_checkpoint": "dvae.pth",
+                        "mel_norm_file": "mel_stats.pth",
+                        "tokenizer_file": "vocab.json",
+                        "xtts_checkpoint": "model.pth",
+                    }
+                    model_args = getattr(config, "model_args", None)
+                    if model_args is None:
+                        raise RuntimeError("Config wytrenowanego XTTS nie zawiera model_args.")
+                    for attr, filename in required_base.items():
+                        asset = base_assets / filename
+                        if not asset.is_file():
+                            raise FileNotFoundError(f"Brak bazowego pliku XTTS: {asset}")
+                        current = getattr(model_args, attr, None)
+                        if not current or not os.path.isfile(str(current)):
+                            setattr(model_args, attr, str(asset))
+
+                    # Always use the verified vocabulary next to the training assets.
+                    # This avoids stale paths saved in the trainer config.
+                    vocab_path = str(base_assets / "vocab.json")
                     model = Xtts.init_from_config(config)
-                    model.load_checkpoint(config, checkpoint_path=checkpoint_path, vocab_path=vocab_path, use_deepspeed=False)
+                    try:
+                        model.load_checkpoint(
+                            config,
+                            checkpoint_path=checkpoint_path,
+                            vocab_path=vocab_path,
+                            use_deepspeed=False,
+                        )
+                    except Exception as load_exc:
+                        raise RuntimeError(
+                            f"Nie udało się załadować wytrenowanego XTTS ({type(load_exc).__name__}): {load_exc}"
+                        ) from load_exc
                     if self._device == "cuda":
                         model.cuda()
                     self._model = model

@@ -174,7 +174,7 @@
 </div>
 <script src="app.js"></script>
 
-  <div id="updateOverlay" class="update-overlay hidden" aria-live="polite"><div class="update-overlay-card"><div class="update-spinner"></div><span class="eyebrow green">AKTUALIZACJA SOUNDCORE</span><h2 id="updateOverlayTitle">Przygotowanie aktualizacji</h2><p id="updateOverlayMessage">Pobieranie paczki…</p><div class="progress large"><span id="updateOverlayBar"></span></div><b id="updateOverlayPercent">0%</b><small>Możesz nadal korzystać z aplikacji podczas pobierania. Restart nastąpi dopiero po przygotowaniu paczki.</small></div></div>
+  <div id="updateOverlay" class="update-overlay hidden" aria-live="polite"><div class="update-overlay-card"><button id="closeUpdateOverlay" class="update-overlay-close" title="Schowaj">×</button><div class="update-overlay-main"><div class="update-spinner"></div><div><span class="eyebrow green">AKTUALIZACJA SOUNDCORE</span><h2 id="updateOverlayTitle">Przygotowanie aktualizacji</h2><p id="updateOverlayMessage">Pobieranie paczki…</p></div></div><div class="progress large"><span id="updateOverlayBar"></span></div><div class="update-overlay-footer"><b id="updateOverlayPercent">0%</b><button id="cancelUpdate" class="btn btn-soft small">Przerwij</button></div><small>Aktualizacja działa w tle. Możesz normalnie korzystać z programu. Esc przerywa aktualizację.</small></div></div>
 <div id="recordingTimerOverlay" class="recording-timer-overlay hidden" aria-live="assertive">
     <div class="recording-timer-card">
       <div id="recordingTimerPhase" class="recording-timer-phase">PRZYGOTUJ SIĘ</div>

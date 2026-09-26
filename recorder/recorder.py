@@ -13,6 +13,7 @@ Funkcje:
 from __future__ import annotations
 
 import time
+import threading
 from dataclasses import dataclass
 from typing import Callable, Optional
 
@@ -22,6 +23,22 @@ import soundfile as sf
 
 DEFAULT_SAMPLERATE = 22050  # zgodne z wymaganiami modeli TTS (XTTS działa na 22050/24000 Hz)
 DEFAULT_CHANNELS = 1
+
+_RECORDING_CANCEL = threading.Event()
+
+
+class RecordingCancelled(RuntimeError):
+    pass
+
+
+def cancel_recording() -> None:
+    """Request cancellation of the currently active microphone recording."""
+    _RECORDING_CANCEL.set()
+    try:
+        sd.stop()
+    except Exception:
+        pass
+
 
 
 @dataclass
@@ -73,6 +90,7 @@ def record_audio(
     Returns:
         numpy.ndarray z próbkami audio (float32, zakres [-1, 1]).
     """
+    _RECORDING_CANCEL.clear()
     frames = int(duration * samplerate)
     audio = sd.rec(
         frames,
@@ -82,17 +100,23 @@ def record_audio(
         device=device,
     )
 
-    if on_progress is not None:
-        start = time.time()
-        while True:
-            elapsed = time.time() - start
-            progress = min(elapsed / duration, 1.0)
+    start = time.time()
+    while True:
+        elapsed = time.time() - start
+        progress = min(elapsed / duration, 1.0)
+        if on_progress is not None:
             on_progress(progress)
-            if progress >= 1.0:
-                break
-            time.sleep(0.05)
+        if _RECORDING_CANCEL.is_set():
+            try:
+                sd.stop()
+            finally:
+                _RECORDING_CANCEL.clear()
+            raise RecordingCancelled("Nagrywanie przerwane przez użytkownika.")
+        if progress >= 1.0:
+            break
+        time.sleep(0.05)
 
-    sd.wait()  # blokuje do zakończenia nagrywania
+    sd.wait()
     return np.squeeze(audio)
 
 

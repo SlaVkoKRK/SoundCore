@@ -1,5 +1,7 @@
 let state={profiles:[],devices:[],notifications:[],hardware:{},training:{},cuda_repair:{}};
 let updateInfo=null, trainingTimer=null, cudaTimer=null, sentenceIndex=0, updatePollTimer=null;
+let updateInstallState="idle", updateOverlayDismissed=false;
+let recordingTimerActive=false, recordingCancelled=false;
 let continuousSession={active:false,count:0,startedAt:0};
 let lastTrainingState="";
 const $=id=>document.getElementById(id);
@@ -50,13 +52,32 @@ function waitMs(ms){return new Promise(resolve=>setTimeout(resolve,ms))}
 async function withRecordingTimer(durationSeconds,title,promptText,action,countdownSeconds=3){
   const overlay=$('recordingTimerOverlay'),phase=$('recordingTimerPhase'),value=$('recordingTimerValue'),ttl=$('recordingTimerTitle'),bar=$('recordingTimerBar'),hint=$('recordingTimerHint'),prompt=$('recordingTimerPrompt');
   const duration=Math.max(1,Number(durationSeconds)||1);
-  overlay.classList.remove('hidden','is-recording','processing');ttl.textContent=title||'Nagrywanie';hint.textContent='Przygotuj się i zacznij czytać po odliczaniu.';prompt.textContent=String(promptText||'').trim();bar.style.width='0%';
-  for(let n=Math.max(0,Number(countdownSeconds)||0);n>=1;n--){phase.textContent='PRZYGOTUJ SIĘ';value.textContent=String(n);await waitMs(1000)}
-  overlay.classList.add('is-recording');phase.textContent='● NAGRYWANIE';ttl.textContent=title||'Nagrywanie w toku';hint.textContent='Czytaj tekst naturalnie. Nie zamykaj okna.';
-  const started=performance.now(); let timer=null;
-  const paint=()=>{const elapsed=(performance.now()-started)/1000;const left=Math.max(0,duration-elapsed);value.textContent=`${left.toFixed(1)} s`;bar.style.width=`${Math.min(100,elapsed/duration*100)}%`;if(left<=0){clearInterval(timer);overlay.classList.remove('is-recording');overlay.classList.add('processing');phase.textContent='PRZETWARZANIE';value.textContent='Gotowe';ttl.textContent='Zapisuję i przygotowuję nagranie…';hint.textContent='Nagranie zakończone.'}};
-  paint();timer=setInterval(paint,100);
-  try{return await action()}finally{clearInterval(timer);setTimeout(()=>overlay.classList.add('hidden'),350)}
+  recordingTimerActive=true; recordingCancelled=false;
+  overlay.classList.remove('hidden','is-recording','processing');ttl.textContent=title||'Nagrywanie';hint.textContent='Przygotuj się i zacznij czytać po odliczaniu. Esc = przerwij.';prompt.textContent=String(promptText||'').trim();bar.style.width='0%';
+  let timer=null;
+  try{
+    for(let n=Math.max(0,Number(countdownSeconds)||0);n>=1;n--){
+      if(recordingCancelled)throw new Error('Nagrywanie przerwane przez użytkownika.');
+      phase.textContent='PRZYGOTUJ SIĘ';value.textContent=String(n);await waitMs(1000);
+    }
+    if(recordingCancelled)throw new Error('Nagrywanie przerwane przez użytkownika.');
+    overlay.classList.add('is-recording');phase.textContent='● NAGRYWANIE';ttl.textContent=title||'Nagrywanie w toku';hint.textContent='Czytaj tekst naturalnie. Esc = przerwij nagrywanie.';
+    const started=performance.now();
+    const paint=()=>{const elapsed=(performance.now()-started)/1000;const left=Math.max(0,duration-elapsed);value.textContent=`${left.toFixed(1)} s`;bar.style.width=`${Math.min(100,elapsed/duration*100)}%`;if(left<=0){clearInterval(timer);overlay.classList.remove('is-recording');overlay.classList.add('processing');phase.textContent='PRZETWARZANIE';value.textContent='Gotowe';ttl.textContent='Zapisuję i przygotowuję nagranie…';hint.textContent='Nagranie zakończone.'}};
+    paint();timer=setInterval(paint,100);
+    return await action();
+  }finally{
+    clearInterval(timer);recordingTimerActive=false;
+    overlay.classList.remove('is-recording','processing');
+    setTimeout(()=>overlay.classList.add('hidden'),recordingCancelled?0:350);
+  }
+}
+async function cancelActiveRecording(){
+  if(!recordingTimerActive)return false;
+  recordingCancelled=true;continuousSession.active=false;
+  $('recordingTimerOverlay').classList.add('hidden');
+  try{await api('cancel_recording')}catch(e){}
+  return true;
 }
 function toast(title,msg,level='info'){const t=document.createElement('div');t.className='toast';t.innerHTML=`<b>${esc(title)}</b><p>${esc(msg)}</p>`;$('toastHost').appendChild(t);setTimeout(()=>t.remove(),4200)}
 function showPage(name){document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));document.querySelectorAll('.nav-item').forEach(b=>b.classList.toggle('active',b.dataset.page===name));$(`page-${name}`).classList.add('active');$('pageTitle').textContent=pages[name][0];$('pageSubtitle').textContent=pages[name][1]}
@@ -197,15 +218,39 @@ async function runContinuousSession(){
   }}catch(e){toast('Sesja ciągła',e.message,'error');await stopContinuousSession('Błąd sesji')}finally{if(continuousSession.active)await stopContinuousSession('Zakończono')}
 }
 async function loadProfileModelInfo(){const profile=$('trainProfile')?.value;if(!profile)return;try{const r=await api('profile_model_info',profile);$('trainedModelState').textContent=r.mode==='trained'?'Wytrenowany XTTS aktywny':(r.has_trained_model?'Wytrenowany model dostępny':'Bazowy XTTS v2');$('trainedModelDetail').textContent=r.has_trained_model?`${r.trained_model.checkpoint_name||'checkpoint'} · ${r.trained_model.trained_at||''}`:'Po zakończeniu treningu checkpoint pojawi się tutaj.';$('activateTrainedModel').disabled=!r.has_trained_model||r.mode==='trained';$('useBaseModel').disabled=r.mode!=='trained'}catch(e){$('trainedModelDetail').textContent=e.message}}
-function renderUpdateOverlay(st){const ov=$('updateOverlay');if(!ov)return;const state=st?.state||'idle';if(state==='idle'){ov.classList.add('hidden');return}ov.classList.remove('hidden');const p=Number(st.progress||0);$('updateOverlayBar').style.width=`${p}%`;$('updateOverlayPercent').textContent=`${p}%`;$('updateOverlayMessage').textContent=st.message||'';$('updateOverlayTitle').textContent=state==='downloading'?'Pobieranie aktualizacji':state==='verified'?'Weryfikacja zakończona':state==='restarting'?'Restart SoundCore…':state==='error'?'Błąd aktualizacji':'Przygotowanie aktualizacji'}
-async function pollUpdateInstall(){try{const st=await api('update_install_status');renderUpdateOverlay(st);$('updateStatus').textContent=st.message||'';if(['error','idle'].includes(st.state)){clearInterval(updatePollTimer);updatePollTimer=null;if(st.state==='error')setTimeout(()=>$('updateOverlay').classList.add('hidden'),1800)}}catch(e){}}
+function renderUpdateOverlay(st){
+  const ov=$('updateOverlay');if(!ov)return;const state=st?.state||'idle';updateInstallState=state;
+  if(['idle','cancelled'].includes(state)){ov.classList.add('hidden');return}
+  if(!updateOverlayDismissed)ov.classList.remove('hidden');
+  const p=Number(st.progress||0);$('updateOverlayBar').style.width=`${p}%`;$('updateOverlayPercent').textContent=`${p}%`;$('updateOverlayMessage').textContent=st.message||'';
+  $('updateOverlayTitle').textContent=state==='downloading'?'Pobieranie aktualizacji':state==='verified'?'Weryfikacja zakończona':state==='restarting'?'Restart SoundCore…':state==='cancelling'?'Przerywanie aktualizacji…':state==='error'?'Błąd aktualizacji':'Przygotowanie aktualizacji';
+  if($('cancelUpdate'))$('cancelUpdate').disabled=!(['starting','downloading'].includes(state));
+}
+async function cancelActiveUpdate(){
+  if(!['starting','downloading'].includes(updateInstallState))return false;
+  try{const st=await api('cancel_update');updateOverlayDismissed=false;renderUpdateOverlay(st)}catch(e){toast('Aktualizacja',e.message,'error')}
+  return true;
+}
+async function pollUpdateInstall(){try{const st=await api('update_install_status');renderUpdateOverlay(st);$('updateStatus').textContent=st.message||'';if(['error','idle','cancelled'].includes(st.state)){clearInterval(updatePollTimer);updatePollTimer=null;if(st.state==='error')setTimeout(()=>$('updateOverlay').classList.add('hidden'),1800)}}catch(e){}}
 function wire(){
   document.querySelectorAll('[data-page]').forEach(b=>b.onclick=()=>showPage(b.dataset.page));
   document.querySelectorAll('[data-goto]').forEach(b=>b.onclick=()=>showPage(b.dataset.goto));
   const search=$('globalSearch');
   search.oninput=()=>renderSearchResults(search.value);
   search.onkeydown=e=>{if(e.key==='Enter'){e.preventDefault();openFirstSearchResult()}if(e.key==='Escape'){$('searchResults').classList.add('hidden');search.blur()}};
-  document.addEventListener('keydown',e=>{if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();search.focus();search.select();renderSearchResults(search.value)}});
+  document.addEventListener('keydown',async e=>{
+    if((e.ctrlKey||e.metaKey)&&e.key.toLowerCase()==='k'){e.preventDefault();search.focus();search.select();renderSearchResults(search.value);return}
+    if(e.key!=='Escape')return;
+    e.preventDefault();
+    if(await cancelActiveRecording())return;
+    if(!$('mediaEditor').classList.contains('hidden')){await closeMediaEditor();return}
+    if(!$('updateOverlay').classList.contains('hidden')&&await cancelActiveUpdate())return;
+    $('updateOverlay').classList.add('hidden');updateOverlayDismissed=true;
+    $('searchResults').classList.add('hidden');search.blur();
+    $('notificationPanel').classList.add('hidden');
+    $('userMenu').classList.add('hidden');$('userMenuBtn').classList.remove('open');$('userMenuBtn').setAttribute('aria-expanded','false');
+    if(!$('trainProfileCreator').classList.contains('hidden'))$('trainProfileCreator').classList.add('hidden');
+  });
   document.addEventListener('click',e=>{if(!e.target.closest('.search-wrap'))$('searchResults').classList.add('hidden')});
 
   $('userMenuBtn').onclick=e=>{e.stopPropagation();const menu=$('userMenu');const willOpen=menu.classList.contains('hidden');menu.classList.toggle('hidden');$('userMenuBtn').classList.toggle('open',willOpen);$('userMenuBtn').setAttribute('aria-expanded',String(willOpen));$('notificationPanel').classList.add('hidden')};
@@ -282,7 +327,7 @@ function wire(){
   };
 
 const synth=async dash=>{const text=dash?$('dashText').value:$('synthText').value,profile=dash?$('dashProfile').value:$('synthProfile').value,lang=dash?$('dashLanguage').value:$('synthLanguage').value,rvc=dash?false:$('synthRvc').checked,btn=dash?$('dashGenerate'):$('synthGenerate');try{btn.disabled=true;const old=btn.textContent;btn.dataset.old=old;btn.textContent='Generowanie…';const r=await api('synthesize',text,profile,lang,rvc);$('playerStatus').textContent=r.name;$('synthResult').textContent=`Gotowe: ${r.path}`;toast('Synteza gotowa',r.name,'success');await refreshState()}catch(e){toast('Synteza',e.message,'error');$('synthResult').textContent=e.message}finally{btn.disabled=false;btn.textContent=btn.dataset.old||'Generuj'}};$('dashGenerate').onclick=()=>synth(true);$('synthGenerate').onclick=()=>synth(false);['dashPlay','playerPlay','synthPlay'].forEach(id=>$(id).onclick=async()=>{try{await api('play_last_generated')}catch(e){toast('Odtwarzanie',e.message,'error')}});$('refreshGpu').onclick=async()=>{try{state.hardware=await api('refresh_hardware');renderHardware();toast('GPU',state.hardware.note,state.hardware.torch_cuda_available?'success':'info')}catch(e){toast('GPU',e.message,'error')}};$('cudaInstallQuick').onclick=$('installCudaBtn').onclick=startCudaRepair;$('restartAfterCuda').onclick=async()=>{await api('restart_app')};$('startTraining').onclick=async()=>{try{renderTraining(await api('start_training',$('trainProfile').value,'pl',Number($('trainEpochs').value),$('trainCompute').value,Number($('trainBatch').value)));toast('Trening','Uruchomiono GPTTrainer','success')}catch(e){toast('Trening',e.message,'error')}};$('stopTraining').onclick=$('dashStopTraining').onclick=async()=>{try{renderTraining(await api('stop_training'));toast('Trening','Zatrzymano trening','info')}catch(e){toast('Trening',e.message,'error')}};
-const check=async()=>{try{$('checkUpdates').disabled=true;$('updateStatus').textContent='Sprawdzanie kanału GitHub…';updateInfo=await api('check_updates');if(!updateInfo.ok)throw new Error(updateInfo.error);$('latestVersion').textContent=`v${updateInfo.latest_version}`;$('updatesLatest').textContent=`v${updateInfo.latest_version}`;$('latestState').textContent=updateInfo.update_available?'Dostępna aktualizacja':'Masz najnowszą wersję';$('installUpdate').disabled=!updateInfo.update_available;const src=updateInfo.source?` · źródło: ${updateInfo.source}`:'';$('updateStatus').textContent=(updateInfo.update_available?`Dostępna wersja ${updateInfo.latest_version}.`:'Masz najnowszą wersję SoundCore.')+src;state.notifications=await api('notifications_state');renderNotifications()}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacje',e.message,'error')}finally{$('checkUpdates').disabled=false}};$('checkUpdates').onclick=$('dashCheckUpdates').onclick=check;$('installUpdate').onclick=async()=>{if(!confirm('Pobrać i przygotować aktualizację w tle? SoundCore zrestartuje się dopiero na końcu.'))return;try{$('installUpdate').disabled=true;const st=await api('install_update');renderUpdateOverlay(st);clearInterval(updatePollTimer);updatePollTimer=setInterval(pollUpdateInstall,500);pollUpdateInstall()}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacja',e.message,'error');$('installUpdate').disabled=false}}}
+const check=async()=>{try{$('checkUpdates').disabled=true;$('updateStatus').textContent='Sprawdzanie kanału GitHub…';updateInfo=await api('check_updates');if(!updateInfo.ok)throw new Error(updateInfo.error);$('latestVersion').textContent=`v${updateInfo.latest_version}`;$('updatesLatest').textContent=`v${updateInfo.latest_version}`;$('latestState').textContent=updateInfo.update_available?'Dostępna aktualizacja':'Masz najnowszą wersję';$('installUpdate').disabled=!updateInfo.update_available;const src=updateInfo.source?` · źródło: ${updateInfo.source}`:'';$('updateStatus').textContent=(updateInfo.update_available?`Dostępna wersja ${updateInfo.latest_version}.`:'Masz najnowszą wersję SoundCore.')+src;state.notifications=await api('notifications_state');renderNotifications()}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacje',e.message,'error')}finally{$('checkUpdates').disabled=false}};$('checkUpdates').onclick=$('dashCheckUpdates').onclick=check;$('installUpdate').onclick=async()=>{if(!confirm('Pobrać i przygotować aktualizację w tle? SoundCore zrestartuje się dopiero na końcu.'))return;try{$('installUpdate').disabled=true;updateOverlayDismissed=false;const st=await api('install_update');renderUpdateOverlay(st);clearInterval(updatePollTimer);updatePollTimer=setInterval(pollUpdateInstall,500);pollUpdateInstall()}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacja',e.message,'error');$('installUpdate').disabled=false}};if($('closeUpdateOverlay'))$('closeUpdateOverlay').onclick=()=>{updateOverlayDismissed=true;$('updateOverlay').classList.add('hidden')};if($('cancelUpdate'))$('cancelUpdate').onclick=cancelActiveUpdate}
 window.addEventListener('pywebviewready',async()=>{wire();await refreshState();await hydrateUserMenu();api('start_background_services').catch(()=>{});startupTimer=setInterval(pollStartup,650);pollStartup();Promise.all([loadPrompt('profileReadingText','profilePromptMeta',$('profileDuration').value,'profile'),loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training',$('trainProfile').value),loadPrompt('trainProfileReadingText','trainProfilePromptMeta',$('trainProfileDuration').value,'profile')]);trainingTimer=setInterval(refreshTraining,1200);loadProfileModelInfo();if(['starting','installing'].includes(state.cuda_repair?.state))cudaTimer=setInterval(refreshCuda,1500)});
 
 // SoundCore 0.3.8 - recording library + audio/video trim editor
