@@ -1,3 +1,9 @@
+# SoundCore 0.4.7
+
+- Fixed Windows installer runtime verification quoting: bootstrap no longer uses `python -c` for the final import test.
+- Runtime verification is written to a temporary Python file and executed normally.
+- Installer always shows the destination folder page while still remembering the previous path.
+
 # SoundCore 0.4.6
 
 - Naprawiono konflikt zależności instalatora: TTS 0.22.0 wymaga scipy>=1.11.2.

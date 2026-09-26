@@ -19,6 +19,7 @@ AppUpdatesURL={#MyAppURL}
 DefaultDirName={localappdata}\Programs\SoundCore
 DefaultGroupName=SoundCore
 DisableProgramGroupPage=yes
+DisableDirPage=no
 PrivilegesRequired=lowest
 OutputDir=output
 OutputBaseFilename=SoundCore-Setup-{#MyAppVersion}

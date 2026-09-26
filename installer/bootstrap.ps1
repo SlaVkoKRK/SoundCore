@@ -131,7 +131,30 @@ try {
     Run -Exe $venvPython -Arguments @('-m','pip','install','-r',$requirements) -Label 'SoundCore dependencies'
 
     Run -Exe $venvPython -Arguments @('-m','pip','install','--force-reinstall','numpy==1.22.0','scipy==1.11.4') -Label 'NumPy/SciPy compatibility fix'
-    Run -Exe $venvPython -Arguments @('-c','import numpy, scipy, torch, webview, TTS; print("SoundCore runtime OK"); print("numpy", numpy.__version__); print("scipy", scipy.__version__); print("torch", torch.__version__); print("cuda", torch.cuda.is_available())') -Label 'Runtime verification'
+
+    # Avoid python -c quoting issues in Windows PowerShell. Write the verification
+    # script to disk and execute it as a normal file instead.
+    $verifyScript = Join-Path $env:TEMP ('soundcore_verify_' + [guid]::NewGuid().ToString('N') + '.py')
+    $verifyCode = @'
+import numpy
+import scipy
+import torch
+import webview
+import TTS
+
+print("SoundCore runtime OK")
+print("numpy", numpy.__version__)
+print("scipy", scipy.__version__)
+print("torch", torch.__version__)
+print("cuda", torch.cuda.is_available())
+'@
+    try {
+        Set-Content -Path $verifyScript -Value $verifyCode -Encoding UTF8
+        Run -Exe $venvPython -Arguments @($verifyScript) -Label 'Runtime verification'
+    }
+    finally {
+        Remove-Item $verifyScript -Force -ErrorAction SilentlyContinue
+    }
 
     if (-not (Test-Path $venvPythonw)) { throw "Final validation failed: $venvPythonw does not exist." }
     Set-Content -Path (Join-Path $AppDir '.installed') -Value (Get-Date -Format o) -Encoding ASCII
