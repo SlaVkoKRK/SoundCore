@@ -472,9 +472,22 @@ class SongManager:
                 env["PHONEMIZER_ESPEAK_LIBRARY"] = espeak["dll"]
                 env["PHONEMIZER_ESPEAK_PATH"] = espeak["path"]
                 env["PYTHONUTF8"] = "1"
+                env["PYTHONUNBUFFERED"] = "1"
+                # DiffRhythm imports top-level packages such as `model`. Running
+                # infer.py with cwd=infer removes the repo root from import lookup
+                # on Windows, producing ModuleNotFoundError: model. Keep the repo
+                # root as cwd and explicitly prepend it to PYTHONPATH.
+                env["PYTHONPATH"] = str(self.repo_dir) + os.pathsep + env.get("PYTHONPATH", "")
                 self._generation_status = {"state": "rendering", "progress": 15, "message": "DiffRhythm generuje piosenkę. Pierwszy render pobiera również modele…", "project_id": pid}
-                with self.log_path.open("w", encoding="utf-8", errors="replace") as log:
-                    self._process = subprocess.Popen(cmd, cwd=str(self.repo_dir / "infer"), env=env, stdout=log, stderr=subprocess.STDOUT)
+                with self.log_path.open("w", encoding="utf-8", errors="replace", buffering=1) as log:
+                    log.write("SoundCore DiffRhythm render\n")
+                    log.write("CWD: " + str(self.repo_dir) + "\n")
+                    log.write("COMMAND: " + " ".join(cmd) + "\n\n")
+                    log.flush()
+                    self._process = subprocess.Popen(
+                        cmd, cwd=str(self.repo_dir), env=env, stdout=log, stderr=subprocess.STDOUT,
+                        creationflags=self._hidden_creationflags(),
+                    )
                     while self._process.poll() is None:
                         if self._cancel.is_set():
                             self._process.terminate()

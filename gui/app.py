@@ -263,14 +263,18 @@ class SoundCoreApi:
         profile = self._profile_manager.get_profile(profile_name)
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
-        from recorder.recorder import DEFAULT_SAMPLERATE, record_audio
+        from recorder.recorder import DEFAULT_SAMPLERATE, record_audio, recording_quality
         from preprocessing.audio_utils import preprocess_pipeline
         from training.dataset import add_sample, get_stats
         from training.text_bank import remember_prompt
         duration = max(3, min(int(duration), 30))
         audio = record_audio(duration=duration, device=int(device_index))
+        quality = recording_quality(audio)
+        if not quality.get("ok"):
+            raise RuntimeError(quality.get("reason") or "Nagranie zostało odrzucone przez kontrolę jakości.")
         cleaned = preprocess_pipeline(audio, DEFAULT_SAMPLERATE)
         sample = add_sample(profile.folder, cleaned, DEFAULT_SAMPLERATE, text)
+        sample["quality"] = quality
         remember_prompt(profile.folder, text, "training")
         stats = get_stats(profile.folder)
         # Fast-start keeps a profile cache; refresh it after every dataset mutation.

@@ -34,10 +34,6 @@ class RecordingCancelled(RuntimeError):
 def cancel_recording() -> None:
     """Request cancellation of the currently active microphone recording."""
     _RECORDING_CANCEL.set()
-    try:
-        sd.stop()
-    except Exception:
-        pass
 
 
 
@@ -69,6 +65,51 @@ def list_input_devices() -> list[InputDevice]:
     return result
 
 
+def _device_native_samplerate(device: Optional[int], fallback: int) -> int:
+    """Prefer the microphone's native rate to avoid driver-side resampling glitches."""
+    try:
+        info = sd.query_devices(device, "input") if device is not None else sd.query_devices(kind="input")
+        rate = int(round(float(info.get("default_samplerate") or 0)))
+        if rate >= 8000:
+            return rate
+    except Exception:
+        pass
+    return int(fallback)
+
+
+_RECORDING_LOCK = threading.Lock()
+
+
+def _resample_recording(audio: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+    if orig_sr == target_sr:
+        return np.asarray(audio, dtype=np.float32)
+    try:
+        from scipy.signal import resample_poly
+        gcd = int(np.gcd(orig_sr, target_sr))
+        return resample_poly(audio, target_sr // gcd, orig_sr // gcd).astype(np.float32)
+    except Exception as exc:
+        raise RuntimeError("Nie udało się bezpiecznie przeskalować nagrania do 22050 Hz.") from exc
+
+
+def recording_quality(audio: np.ndarray) -> dict:
+    """Return lightweight recording-health metrics used before dataset save."""
+    x = np.asarray(audio, dtype=np.float32).reshape(-1)
+    if not x.size:
+        return {"ok": False, "reason": "Puste nagranie.", "peak": 0.0, "rms": 0.0, "clip_ratio": 0.0}
+    finite = np.isfinite(x)
+    if not bool(np.all(finite)):
+        return {"ok": False, "reason": "Nagranie zawiera nieprawidłowe próbki audio.", "peak": 0.0, "rms": 0.0, "clip_ratio": 0.0}
+    peak = float(np.max(np.abs(x)))
+    rms = float(np.sqrt(np.mean(np.square(x, dtype=np.float64))))
+    clip_ratio = float(np.mean(np.abs(x) >= 0.985))
+    # Strongly clipped / stuck input is not useful for voice training.
+    if clip_ratio >= 0.02 or (peak >= 0.999 and rms >= 0.45):
+        return {"ok": False, "reason": "Próbka jest przesterowana — nie została dodana do datasetu.", "peak": peak, "rms": rms, "clip_ratio": clip_ratio}
+    if rms < 0.0008:
+        return {"ok": False, "reason": "Próbka jest praktycznie cicha — sprawdź mikrofon.", "peak": peak, "rms": rms, "clip_ratio": clip_ratio}
+    return {"ok": True, "reason": "OK", "peak": peak, "rms": rms, "clip_ratio": clip_ratio}
+
+
 def record_audio(
     duration: float,
     samplerate: int = DEFAULT_SAMPLERATE,
@@ -80,66 +121,69 @@ def record_audio(
     silence_seconds: float = 0.75,
     silence_threshold: float = 0.008,
 ) -> np.ndarray:
-    """
-    Nagrywa głos przez co najmniej ``duration`` sekund.
+    """Record one isolated microphone session using an owned InputStream.
 
-    W trybie ``smart_tail`` po osiągnięciu czasu docelowego SoundCore nie
-    ucina użytkownika w połowie słowa: nagranie trwa jeszcze maksymalnie
-    ``max_extra_seconds`` i kończy się po wykryciu krótkiej ciszy.
+    Recording happens at the input device's native sample rate and is resampled
+    to ``samplerate`` afterwards. This avoids rapid ``sd.rec()/sd.stop()`` reuse
+    in continuous sessions, which can leave WASAPI/PortAudio in a bad state.
     """
-    _RECORDING_CANCEL.clear()
     duration = max(float(duration), 0.1)
     extra = max(float(max_extra_seconds), 0.0) if smart_tail else 0.0
     max_duration = duration + extra
-    total_frames = int(max_duration * samplerate)
-    audio = sd.rec(
-        total_frames,
-        samplerate=samplerate,
-        channels=channels,
-        dtype="float32",
-        device=device,
-    )
+    native_sr = _device_native_samplerate(device, samplerate)
+    blocksize = max(256, min(2048, int(native_sr * 0.04)))
 
-    start = time.time()
-    last_voice_at = duration
-    ended_early = False
-    used_elapsed = max_duration
-    window_seconds = 0.25
-    while True:
-        elapsed = time.time() - start
-        used_elapsed = min(elapsed, max_duration)
-        if on_progress is not None:
-            on_progress(min(elapsed / duration, 1.0))
-        if _RECORDING_CANCEL.is_set():
-            try:
-                sd.stop()
-            finally:
-                _RECORDING_CANCEL.clear()
-            raise RecordingCancelled("Nagrywanie przerwane przez użytkownika.")
+    # Never overlap microphone capture with another SoundCore capture. Also stop
+    # playback before opening the input device; some Windows drivers are fragile
+    # when convenience streams overlap.
+    try:
+        stop_playback(timeout=0.8)
+    except Exception:
+        pass
 
-        if smart_tail and elapsed >= duration:
-            end_frame = min(int(elapsed * samplerate), total_frames)
-            begin_frame = max(0, end_frame - int(window_seconds * samplerate))
-            if end_frame > begin_frame:
-                block = np.asarray(audio[begin_frame:end_frame], dtype=np.float32)
-                rms = float(np.sqrt(np.mean(np.square(block)))) if block.size else 0.0
-                if rms >= silence_threshold:
-                    last_voice_at = elapsed
-                elif elapsed - last_voice_at >= silence_seconds:
-                    ended_early = True
+    with _RECORDING_LOCK:
+        _RECORDING_CANCEL.clear()
+        chunks: list[np.ndarray] = []
+        start = time.monotonic()
+        last_voice_at = duration
+        with sd.InputStream(
+            samplerate=native_sr,
+            channels=channels,
+            dtype="float32",
+            device=device,
+            blocksize=blocksize,
+        ) as stream:
+            while True:
+                if _RECORDING_CANCEL.is_set():
+                    _RECORDING_CANCEL.clear()
+                    raise RecordingCancelled("Nagrywanie przerwane przez użytkownika.")
+                data, overflowed = stream.read(blocksize)
+                # Copy immediately; PortAudio owns the source buffer.
+                block = np.asarray(data, dtype=np.float32).copy()
+                if channels == 1:
+                    block = block[:, 0]
+                else:
+                    block = np.mean(block, axis=1)
+                chunks.append(block)
+
+                elapsed = time.monotonic() - start
+                if on_progress is not None:
+                    on_progress(min(elapsed / duration, 1.0))
+
+                if smart_tail and elapsed >= duration:
+                    rms = float(np.sqrt(np.mean(np.square(block, dtype=np.float64)))) if block.size else 0.0
+                    if rms >= silence_threshold:
+                        last_voice_at = elapsed
+                    elif elapsed - last_voice_at >= silence_seconds:
+                        break
+                if elapsed >= max_duration:
                     break
 
-        if elapsed >= max_duration:
-            break
-        time.sleep(0.05)
-
-    if ended_early:
-        sd.stop()
-    else:
-        sd.wait()
-    used_frames = min(max(1, int(used_elapsed * samplerate)), total_frames)
-    return np.squeeze(audio[:used_frames]).copy()
-
+        raw = np.concatenate(chunks) if chunks else np.zeros(1, dtype=np.float32)
+        # Give WASAPI/PortAudio a short, deterministic release window before a
+        # continuous session may open the next InputStream.
+        time.sleep(0.18)
+        return _resample_recording(raw, native_sr, int(samplerate))
 
 def save_wav(audio: np.ndarray, path: str, samplerate: int = DEFAULT_SAMPLERATE) -> None:
     """Zapisuje dane audio do pliku .wav."""

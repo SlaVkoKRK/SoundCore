@@ -1,4 +1,4 @@
-**Current release: 0.7.5**
+**Current release: 0.7.6**
 
 
 ## Song Studio (0.7.0)
