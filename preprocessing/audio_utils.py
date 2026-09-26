@@ -61,8 +61,8 @@ def trim_silence(
     audio: np.ndarray,
     samplerate: int,
     frame_ms: int = 30,
-    energy_threshold_ratio: float = 0.02,
-    padding_ms: int = 100,
+    energy_threshold_ratio: float = 0.01,
+    padding_ms: int = 350,
 ) -> np.ndarray:
     """
     Obcina ciszę z początku i końca nagrania na podstawie prostego

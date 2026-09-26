@@ -301,6 +301,10 @@ Windows installer uses Python 3.10 with numpy 1.22.0, scipy 1.11.4 and TTS 0.22.
 Wersja 0.5.0 rozwija cały workflow od zbierania datasetu do użycia wytrenowanego głosu. Sesja ciągła pozwala nagrywać tekst po tekście bez ręcznego uruchamiania każdej próbki. GPTTrainer raportuje do WebUI realną epokę, krok, loss, learning rate, historię wykresu oraz log techniczny zapisany również w profilu. Po zakończeniu fine-tuningu checkpoint można jednym przyciskiem podpiąć pod profil lub wrócić do bazowego XTTS v2. Aktualizacje są sprawdzane przez GitHub API i przygotowywane w tle przed restartem aplikacji.
 
 
-## SoundCore 0.5.3
+## SoundCore 0.5.4
 
 Wersja 0.5.2 poprawia ładowanie wytrenowanych modeli XTTS i zachowanie długich operacji UI. Fine-tunowany profil odtwarza wymagane ścieżki bazowych assetów XTTS przed inference, a synteza ponownie wyszukuje aktualny checkpoint na dysku. Aktualizacje są prezentowane jako nieblokująca karta w tle z realnym anulowaniem, a klawisz `Esc` służy do przerywania nagrywania i aktywnych okien/overlayów.
+
+### Studio Syntezy i A/B (0.5.4)
+
+Studio Syntezy jest pełnym panelem generowania: wybór modelu (aktywny/bazowy/wytrenowany), stylu, tempa i RVC. Test A/B zapisuje obie wersje do Historii syntezy, gdzie można je odsłuchać, wyeksportować do WAV lub usunąć. Nagrania mikrofonowe mają inteligentne zakończenie po ciszy, a inference wytrenowanego XTTS dzieli dłuższy tekst na zdania.

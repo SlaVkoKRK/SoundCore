@@ -1,3 +1,14 @@
+# SoundCore 0.5.4
+
+- przebudowane Studio Syntezy: model aktywny/bazowy/wytrenowany, styl, tempo, RVC i zapis WAV,
+- test A/B generuje ten sam tekst bazowym i wytrenowanym XTTS bez zmiany aktywnego modelu profilu,
+- dodana trwała Historia syntezy z odsłuchem, eksportem i usuwaniem plików,
+- Pulpit i Studio korzystają z tego samego backendu; styl na Pulpicie nie jest już atrapą,
+- wytrenowany XTTS używa dzielenia tekstu na zdania podczas inference, co ogranicza ucinanie dłuższych wypowiedzi,
+- nagrywanie ma inteligentny ogon: po czasie docelowym czeka na krótką ciszę zamiast ucinać końcówkę słowa,
+- preprocessing zostawia większy margines początku/końca nagrania,
+- wygenerowany WAV dostaje krótki naturalny ogon ciszy.
+
 # SoundCore 0.5.3
 
 - Naprawiono ładowanie fine-tunowanego XTTS w Coqui TTS 0.22.0: `load_checkpoint()` dostaje teraz również `checkpoint_dir`, co omija błąd `os.path.join(None, "speakers_xtts.pth")`.

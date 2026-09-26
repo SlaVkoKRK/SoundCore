@@ -101,9 +101,9 @@
           <div class="control-row three">
             <label><span>Profil głosu</span><select id="dashProfile"></select></label>
             <label><span>Język</span><select id="dashLanguage"><option value="pl">🇵🇱 Polski (PL)</option><option value="en">🇬🇧 English (EN)</option><option value="de">🇩🇪 Deutsch (DE)</option></select></label>
-            <label><span>Styl</span><select><option>Naturalny</option><option>Spokojny</option><option>Wyraźny</option></select></label>
+            <label><span>Styl</span><select id="dashStyle"><option value="natural">Naturalny</option><option value="calm">Spokojny</option><option value="clear">Wyraźny</option></select></label>
           </div>
-          <div class="action-row"><button id="dashGenerate" class="btn btn-gradient">✦ Generuj</button><button id="dashPlay" class="btn btn-soft">▶ Odtwórz</button><div class="grow"></div><select class="mini-select"><option>1.0×</option><option>0.9×</option><option>1.1×</option></select><button class="btn btn-soft" data-goto="synthesis">⇩ Pobierz</button></div>
+          <div class="action-row"><button id="dashGenerate" class="btn btn-gradient">✦ Generuj</button><button id="dashPlay" class="btn btn-soft">▶ Odtwórz</button><div class="grow"></div><select id="dashSpeed" class="mini-select"><option value="1">1.0×</option><option value="0.9">0.9×</option><option value="1.1">1.1×</option></select><button id="dashDownload" class="btn btn-soft">⇩ Zapisz</button></div>
           <div class="audio-player"><button id="playerPlay" class="play-circle">▶</button><div class="waveform" aria-hidden="true"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><div id="playerStatus" class="audio-time">Brak pliku</div></div>
         </article>
 
@@ -123,10 +123,32 @@
     </section>
 
     <section id="page-synthesis" class="page">
-      <div class="page-grid two-thirds">
-        <article class="card"><div class="card-head"><div><span class="eyebrow blue">STUDIO</span><h2>Synteza mowy</h2><p>Wpisz tekst, wybierz profil i wygeneruj nagranie.</p></div></div><textarea id="synthText" class="editor tall">Witaj, to jest przykładowy tekst wypowiedziany moim własnym głosem.</textarea><div class="action-row"><button id="synthGenerate" class="btn btn-gradient">✦ Generuj i odtwórz</button><button id="synthPlay" class="btn btn-soft">▶ Odtwórz ostatni</button></div><div id="synthResult" class="status-box">Brak wygenerowanego pliku.</div></article>
-        <article class="card"><div class="card-head"><div><h2>Ustawienia syntezy</h2><p>Parametry głosu i języka.</p></div></div><div class="stack"><label><span>Profil głosu</span><select id="synthProfile"></select></label><label><span>Język</span><select id="synthLanguage"><option value="pl">Polski</option><option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="es">Español</option></select></label><label class="check"><input id="synthRvc" type="checkbox"/><span>Popraw barwę przez RVC</span></label></div></article>
+      <div class="synthesis-studio-grid">
+        <article class="card synthesis-main-card">
+          <div class="card-head"><div><span class="eyebrow blue">STUDIO</span><h2>Synteza mowy</h2><p>Pełne studio generowania i porównywania modeli.</p></div><span id="synthModelBadge" class="status-pill neutral">AKTYWNY</span></div>
+          <textarea id="synthText" class="editor tall">Witaj, to jest przykładowy tekst wypowiedziany moim własnym głosem.</textarea>
+          <div class="control-row three">
+            <label><span>Profil głosu</span><select id="synthProfile"></select></label>
+            <label><span>Język</span><select id="synthLanguage"><option value="pl">🇵🇱 Polski (PL)</option><option value="en">🇬🇧 English (EN)</option><option value="de">🇩🇪 Deutsch (DE)</option><option value="fr">🇫🇷 Français (FR)</option><option value="es">🇪🇸 Español (ES)</option></select></label>
+            <label><span>Model</span><select id="synthModelMode"><option value="active">Aktywny model profilu</option><option value="base">Bazowy XTTS v2</option><option value="trained">Wytrenowany XTTS</option></select></label>
+          </div>
+          <div class="control-row three">
+            <label><span>Styl</span><select id="synthStyle"><option value="natural">Naturalny</option><option value="calm">Spokojny</option><option value="clear">Wyraźny</option></select></label>
+            <label><span>Tempo</span><select id="synthSpeed"><option value="0.9">0.9×</option><option value="1" selected>1.0×</option><option value="1.1">1.1×</option></select></label>
+            <label class="check synthesis-check"><input id="synthRvc" type="checkbox"/><span>Popraw barwę przez RVC</span></label>
+          </div>
+          <div class="action-row"><button id="synthGenerate" class="btn btn-gradient">✦ Generuj</button><button id="synthGenerateAB" class="btn btn-dark">A/B Bazowy ↔ Wytrenowany</button><button id="synthPlay" class="btn btn-soft">▶ Odtwórz ostatni</button><div class="grow"></div><button id="synthDownload" class="btn btn-soft">⇩ Zapisz WAV</button></div>
+          <div id="synthResult" class="status-box">Brak wygenerowanego pliku.</div>
+        </article>
+        <article class="card ab-card">
+          <div class="card-head"><div><span class="eyebrow violet">A/B</span><h2>Porównanie modeli</h2><p>Ten sam tekst, te same ustawienia, dwa modele.</p></div></div>
+          <div id="abCompare" class="ab-compare-empty">Kliknij „A/B”, aby wygenerować obie wersje.</div>
+        </article>
       </div>
+      <article class="card synthesis-library-card">
+        <div class="card-head"><div><span class="eyebrow green">BIBLIOTEKA</span><h2>Historia syntezy</h2><p>Wygenerowane pliki zostają zapisane, aby można było je odsłuchiwać i porównywać.</p></div><button id="refreshSynthHistory" class="btn btn-soft small">↻ Odśwież</button></div>
+        <div id="synthesisHistory" class="synthesis-history"><div class="status-box">Brak wygenerowanych plików.</div></div>
+      </article>
     </section>
 
     <section id="page-profiles" class="page">

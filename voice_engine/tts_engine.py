@@ -196,6 +196,8 @@ class VoiceEngine:
         output_path: str,
         language: str = "pl",
         trained_model: Optional[dict] = None,
+        style: str = "natural",
+        speed: float = 1.0,
     ) -> str:
         """
         Generuje plik audio z wypowiedzianym `text`, w głosie sklonowanym
@@ -217,12 +219,24 @@ class VoiceEngine:
 
         self.ensure_loaded(trained_model)
 
+        preset = {
+            "natural": {"temperature": 0.72, "repetition_penalty": 8.0, "top_p": 0.85, "speed_mul": 1.0},
+            "calm": {"temperature": 0.62, "repetition_penalty": 7.0, "top_p": 0.82, "speed_mul": 0.94},
+            "clear": {"temperature": 0.56, "repetition_penalty": 9.0, "top_p": 0.78, "speed_mul": 0.97},
+        }.get((style or "natural").lower(), {})
+        final_speed = max(0.75, min(1.25, float(speed or 1.0) * float(preset.get("speed_mul", 1.0))))
+
         if not trained_model:
             self._model.tts_to_file(
                 text=text,
                 speaker_wav=speaker_wav_path,
                 language=language,
                 file_path=output_path,
+                split_sentences=True,
+                speed=final_speed,
+                temperature=float(preset.get("temperature", 0.72)),
+                repetition_penalty=float(preset.get("repetition_penalty", 8.0)),
+                top_p=float(preset.get("top_p", 0.85)),
             )
         else:
             import soundfile as sf
@@ -232,10 +246,22 @@ class VoiceEngine:
                 language,
                 gpt_cond_latent,
                 speaker_embedding,
+                enable_text_splitting=True,
+                speed=final_speed,
+                temperature=float(preset.get("temperature", 0.72)),
+                repetition_penalty=float(preset.get("repetition_penalty", 8.0)),
+                top_p=float(preset.get("top_p", 0.85)),
             )
             wav = result["wav"] if isinstance(result, dict) else result
             sample_rate = int(getattr(getattr(self._model_config, "audio", None), "output_sample_rate", 24000) or 24000)
             sf.write(output_path, wav, sample_rate)
+
+        # Leave a short natural tail so the final phoneme is not cut flush at EOF.
+        import numpy as np
+        import soundfile as sf
+        data, sr = sf.read(output_path, dtype="float32")
+        tail = np.zeros((max(1, int(sr * 0.28)),) if getattr(data, "ndim", 1) == 1 else (max(1, int(sr * 0.28)), data.shape[1]), dtype=np.float32)
+        sf.write(output_path, np.concatenate([data, tail], axis=0), sr)
         return output_path
 
 

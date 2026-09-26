@@ -3,6 +3,7 @@ from __future__ import annotations
 import getpass
 import json
 import os
+import shutil
 import subprocess
 import sys
 import threading
@@ -33,6 +34,7 @@ OUTPUT_DIR.mkdir(exist_ok=True)
 CACHE_DIR = BASE_DIR / "cache"
 CACHE_DIR.mkdir(exist_ok=True)
 HARDWARE_CACHE = CACHE_DIR / "hardware.json"
+SYNTH_HISTORY_PATH = OUTPUT_DIR / "history.json"
 
 
 def _default_hardware() -> dict:
@@ -282,7 +284,92 @@ class SoundCoreApi:
         self._notify("Profil usunięty", f"Usunięto profil '{profile_name}'.", "info")
         return {"ok": True, "profiles": self._profiles_payload()}
 
-    def synthesize(self, text: str, profile_name: str, language: str = "pl", use_rvc: bool = False) -> dict:
+    def _load_synthesis_history(self) -> list[dict]:
+        try:
+            rows = json.loads(SYNTH_HISTORY_PATH.read_text(encoding="utf-8"))
+            if isinstance(rows, list):
+                return [x for x in rows if isinstance(x, dict)]
+        except Exception:
+            pass
+        return []
+
+    def _save_synthesis_history(self, rows: list[dict]) -> None:
+        SYNTH_HISTORY_PATH.write_text(json.dumps(rows[-500:], ensure_ascii=False, indent=2), encoding="utf-8")
+
+    def _add_synthesis_history(self, *, path: Path, text: str, profile_name: str, language: str,
+                               style: str, speed: float, model_mode: str, use_rvc: bool, ab_group: str = "") -> dict:
+        duration = 0.0
+        try:
+            import soundfile as sf
+            duration = round(float(sf.info(str(path)).duration), 2)
+        except Exception:
+            pass
+        row = {
+            "id": path.stem, "name": path.name, "path": str(path),
+            "created_at": datetime.now().isoformat(timespec="seconds"),
+            "text": text, "profile": profile_name, "language": language,
+            "style": style, "speed": float(speed), "model_mode": model_mode,
+            "rvc": bool(use_rvc), "duration_seconds": duration, "ab_group": ab_group or "",
+        }
+        rows = self._load_synthesis_history()
+        rows.append(row)
+        self._save_synthesis_history(rows)
+        return row
+
+    def list_synthesis_history(self, limit: int = 100) -> dict:
+        rows = [x for x in self._load_synthesis_history() if os.path.isfile(str(x.get("path", "")))]
+        rows = list(reversed(rows[-max(1, min(int(limit), 500)):]))
+        return {"ok": True, "items": rows}
+
+    def play_synthesis(self, item_id: str) -> dict:
+        item = next((x for x in self._load_synthesis_history() if x.get("id") == item_id), None)
+        if not item or not os.path.isfile(str(item.get("path", ""))):
+            raise FileNotFoundError("Nie znaleziono wygenerowanego nagrania.")
+        from recorder.recorder import play_wav
+        threading.Thread(target=lambda: play_wav(item["path"]), daemon=True).start()
+        return {"ok": True}
+
+    def delete_synthesis(self, item_id: str) -> dict:
+        rows = self._load_synthesis_history()
+        kept = []
+        for item in rows:
+            if item.get("id") == item_id:
+                try:
+                    Path(str(item.get("path", ""))).unlink(missing_ok=True)
+                except Exception:
+                    pass
+            else:
+                kept.append(item)
+        self._save_synthesis_history(kept)
+        return self.list_synthesis_history()
+
+    def export_synthesis(self, item_id: str = "") -> dict:
+        item = None
+        rows = self._load_synthesis_history()
+        if item_id:
+            item = next((x for x in rows if x.get("id") == item_id), None)
+        elif self._last_generated:
+            item = {"path": self._last_generated, "name": Path(self._last_generated).name}
+        if not item or not os.path.isfile(str(item.get("path", ""))):
+            raise FileNotFoundError("Brak pliku do zapisania.")
+        win = webview.active_window()
+        if win is None:
+            raise RuntimeError("Okno SoundCore nie jest gotowe.")
+        save_dialog = getattr(webview.FileDialog, "SAVE", None)
+        if save_dialog is None:
+            raise RuntimeError("Ta wersja pywebview nie obsługuje okna zapisu.")
+        selected = win.create_file_dialog(save_dialog, save_filename=item.get("name") or Path(item["path"]).name, file_types=("WAV (*.wav)",))
+        if not selected:
+            return {"ok": False, "cancelled": True}
+        dest = selected[0] if isinstance(selected, (list, tuple)) else selected
+        dest_path = Path(str(dest))
+        if dest_path.suffix.lower() != ".wav":
+            dest_path = dest_path.with_suffix(".wav")
+        shutil.copy2(item["path"], dest_path)
+        return {"ok": True, "path": str(dest_path)}
+
+    def synthesize(self, text: str, profile_name: str, language: str = "pl", use_rvc: bool = False,
+                   style: str = "natural", speed: float = 1.0, model_mode: str = "active", ab_group: str = "") -> dict:
         profile = self._profile_manager.get_profile(profile_name)
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
@@ -294,19 +381,24 @@ class SoundCoreApi:
             self._services["xtts"].update(state="loading", message="Ładowanie XTTS…")
             from voice_engine.tts_engine import get_engine
             self._engine = get_engine()
-        stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        raw = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_raw.wav"
+
+        requested = (model_mode or "active").lower()
+        if requested not in {"active", "base", "trained"}:
+            requested = "active"
+        actual_mode = getattr(profile, "xtts_mode", "base") if requested == "active" else requested
         trained_model = None
-        if getattr(profile, "xtts_mode", "base") == "trained":
-            # Resolve the files from disk every time instead of trusting stale
-            # absolute paths saved in metadata.json by an older release/run.
+        if actual_mode == "trained":
             trained_model = self._profile_manager.find_trained_xtts(profile_name)
             if not trained_model:
-                raise FileNotFoundError(
-                    "Profil ma ustawiony wytrenowany XTTS, ale nie znaleziono kompletnego checkpointu/config/vocab. "
-                    "Przełącz profil na bazowy XTTS albo ponownie aktywuj wytrenowany model."
-                )
-        self._engine.clone_and_speak(text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language, trained_model=trained_model)
+                raise FileNotFoundError("Nie znaleziono kompletnego wytrenowanego modelu XTTS dla tego profilu.")
+
+        stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
+        safe_style = (style or "natural").lower()
+        raw = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_{actual_mode}_{safe_style}.wav"
+        self._engine.clone_and_speak(
+            text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language,
+            trained_model=trained_model, style=safe_style, speed=float(speed or 1.0),
+        )
         final = raw
         self._services["xtts"].update(state="ready", message=("Wytrenowany model profilu" if trained_model else "Bazowy XTTS v2"))
         if use_rvc:
@@ -314,14 +406,26 @@ class SoundCoreApi:
                 self._services["rvc"].update(state="loading", message="Ładowanie RVC…")
                 from voice_engine.rvc_engine import get_rvc_engine
                 self._rvc_engine = get_rvc_engine()
-            rvc = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_rvc.wav"
+            rvc = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_{actual_mode}_{safe_style}_rvc.wav"
             self._rvc_engine.load_model(profile.rvc_model_path, profile.rvc_index_path)
             self._rvc_engine.convert(str(raw), str(rvc))
             self._services["rvc"].update(state="ready", message="Gotowy")
             final = rvc
         self._last_generated = str(final)
+        history = self._add_synthesis_history(
+            path=final, text=text.strip(), profile_name=profile_name, language=language, style=safe_style,
+            speed=float(speed or 1.0), model_mode=actual_mode, use_rvc=use_rvc, ab_group=ab_group,
+        )
         self._notify("Synteza zakończona", f"Gotowy plik: {final.name}", "success")
-        return {"ok": True, "path": str(final), "name": final.name}
+        return {"ok": True, "path": str(final), "name": final.name, "item": history, "model_mode": actual_mode}
+
+    def synthesize_ab(self, text: str, profile_name: str, language: str = "pl", style: str = "natural", speed: float = 1.0) -> dict:
+        if not self._profile_manager.find_trained_xtts(profile_name):
+            raise FileNotFoundError("Test A/B wymaga wytrenowanego modelu XTTS dla tego profilu.")
+        group = datetime.now().strftime("ab_%Y%m%d_%H%M%S_%f")
+        base = self.synthesize(text, profile_name, language, False, style, speed, "base", group)
+        trained = self.synthesize(text, profile_name, language, False, style, speed, "trained", group)
+        return {"ok": True, "group": group, "base": base, "trained": trained}
 
     def play_last_generated(self) -> dict:
         if not self._last_generated or not os.path.isfile(self._last_generated):
@@ -638,6 +742,11 @@ def run() -> None:
         api.play_profile,
         api.delete_profile,
         api.synthesize,
+        api.synthesize_ab,
+        api.list_synthesis_history,
+        api.play_synthesis,
+        api.delete_synthesis,
+        api.export_synthesis,
         api.play_last_generated,
         api.profile_model_info,
         api.activate_trained_xtts,
