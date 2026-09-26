@@ -1,3 +1,29 @@
+# SoundCore 0.6.0
+
+## Voice Engine Lab
+
+- Nowa warstwa wielu silników głosu w Studio Syntezy.
+- XTTS v2 pozostaje stabilnym, domyślnym silnikiem dla języka polskiego.
+- F5-TTS v1 można zainstalować z GUI do izolowanego `engine_runtime/f5`; inference działa jako osobny proces i nie modyfikuje głównego venv SoundCore.
+- Qwen3-TTS 0.6B Base można zainstalować z GUI do izolowanego `engine_runtime/qwen`; SoundCore wymaga osobnego Python 3.12 i używa trybu voice-clone x-vector/Auto jako eksperymentu.
+- CosyVoice 3 jest widoczny w laboratorium jako wariant eksperymentalny/manualny; oficjalny stack nie deklaruje języka polskiego.
+- Aktualizator chroni `engine_runtime`, więc pobrane środowiska/model cache nie są usuwane przy aktualizacji SoundCore.
+- Studio ma wybór silnika oraz A/B pomiędzy: XTTS bazowy, XTTS wytrenowany, F5-TTS i Qwen3-TTS.
+- Historia syntezy zapisuje nazwę użytego silnika.
+
+## RVC Manager
+
+- Nowy panel RVC w `Profile głosu`.
+- Instalacja `rvc-python` bez ręcznego terminala.
+- Wybór modelu `.pth` i opcjonalnego pliku `.index` z GUI.
+- Status runtime/modelu per profil oraz możliwość odpięcia RVC.
+- Po podpięciu modelu checkbox `Popraw barwę przez RVC` działa jako post-processing wyniku dowolnego dostępnego silnika TTS.
+
+## Stabilność
+
+- Eksperymentalne silniki są izolowane od środowiska XTTS.
+- Zachowano wszystkie poprawki 0.5.5 dotyczące bezpiecznego, pojedynczego odtwarzacza A/B.
+
 # SoundCore 0.5.5
 
 ## Stabilne odtwarzanie A/B

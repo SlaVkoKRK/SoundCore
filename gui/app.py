@@ -23,6 +23,7 @@ from system.cuda_manager import CudaRepairManager
 from system.windows_integration import prepare_windows_process, setup_windows_shell_async
 from training.manager import TrainingManager
 from updater.update_manager import UpdateCancelled, check_for_update, download_update, launch_apply
+from voice_engine.external_engines import ExternalEngineManager
 
 BASE_DIR = Path(__file__).resolve().parents[1]
 WEBUI_DIR = BASE_DIR / "webui"
@@ -72,6 +73,8 @@ class SoundCoreApi:
         self._cuda_repair = CudaRepairManager(BASE_DIR / "training_runtime")
         self._engine = None
         self._rvc_engine = None
+        self._external_engines = ExternalEngineManager(BASE_DIR)
+        self._rvc_install_status: dict = {"state": "idle", "progress": 0, "message": "RVC nie jest instalowane."}
         self._hardware: dict = _load_hardware_cache()
         self._devices: list[dict] = []
         self._profiles_cache: list[dict] | None = None
@@ -115,6 +118,8 @@ class SoundCoreApi:
             "last_generated": self._last_generated,
             "cuda_repair": self._cuda_repair.status(),
             "services": self.startup_status()["services"],
+            "voice_engines": self._external_engines.status(),
+            "rvc_install": dict(self._rvc_install_status),
         }
 
     def startup_status(self) -> dict:
@@ -177,7 +182,7 @@ class SoundCoreApi:
             trained = self._profile_manager.find_trained_xtts(p.name)
             rows.append({
                 "name": p.name, "created_at": p.created_at, "duration_seconds": p.duration_seconds,
-                "has_rvc_model": p.has_rvc_model, "xtts_mode": p.xtts_mode,
+                "has_rvc_model": p.has_rvc_model, "rvc_model_path": p.rvc_model_path, "rvc_index_path": p.rvc_index_path, "xtts_mode": p.xtts_mode,
                 "has_trained_xtts": bool(trained), "trained_xtts": trained,
                 "dataset": {"samples": samples, "duration_seconds": 0.0, "duration_minutes": 0.0},
             })
@@ -191,7 +196,7 @@ class SoundCoreApi:
             trained = self._profile_manager.find_trained_xtts(p.name)
             rows.append({
                 "name": p.name, "created_at": p.created_at, "duration_seconds": p.duration_seconds,
-                "has_rvc_model": p.has_rvc_model, "xtts_mode": p.xtts_mode,
+                "has_rvc_model": p.has_rvc_model, "rvc_model_path": p.rvc_model_path, "rvc_index_path": p.rvc_index_path, "xtts_mode": p.xtts_mode,
                 "has_trained_xtts": bool(trained), "trained_xtts": trained,
                 "dataset": stats.to_dict(),
             })
@@ -297,7 +302,7 @@ class SoundCoreApi:
         SYNTH_HISTORY_PATH.write_text(json.dumps(rows[-500:], ensure_ascii=False, indent=2), encoding="utf-8")
 
     def _add_synthesis_history(self, *, path: Path, text: str, profile_name: str, language: str,
-                               style: str, speed: float, model_mode: str, use_rvc: bool, ab_group: str = "") -> dict:
+                               style: str, speed: float, model_mode: str, use_rvc: bool, ab_group: str = "", engine: str = "xtts") -> dict:
         duration = 0.0
         try:
             import soundfile as sf
@@ -308,7 +313,7 @@ class SoundCoreApi:
             "id": path.stem, "name": path.name, "path": str(path),
             "created_at": datetime.now().isoformat(timespec="seconds"),
             "text": text, "profile": profile_name, "language": language,
-            "style": style, "speed": float(speed), "model_mode": model_mode,
+            "style": style, "speed": float(speed), "model_mode": model_mode, "engine": engine,
             "rvc": bool(use_rvc), "duration_seconds": duration, "ab_group": ab_group or "",
         }
         rows = self._load_synthesis_history()
@@ -369,7 +374,8 @@ class SoundCoreApi:
         return {"ok": True, "path": str(dest_path)}
 
     def synthesize(self, text: str, profile_name: str, language: str = "pl", use_rvc: bool = False,
-                   style: str = "natural", speed: float = 1.0, model_mode: str = "active", ab_group: str = "") -> dict:
+                   style: str = "natural", speed: float = 1.0, model_mode: str = "active", ab_group: str = "",
+                   engine_id: str = "xtts") -> dict:
         profile = self._profile_manager.get_profile(profile_name)
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
@@ -377,7 +383,10 @@ class SoundCoreApi:
             raise ValueError("Wpisz tekst do syntezy.")
         if use_rvc and not profile.has_rvc_model:
             raise ValueError("Profil nie ma podpiętego modelu RVC.")
-        if self._engine is None:
+        engine_id = (engine_id or "xtts").lower()
+        if engine_id not in {"xtts", "f5", "qwen"}:
+            raise ValueError("Ten silnik nie jest jeszcze dostępny do syntezy lokalnej.")
+        if engine_id == "xtts" and self._engine is None:
             self._services["xtts"].update(state="loading", message="Ładowanie XTTS…")
             from voice_engine.tts_engine import get_engine
             self._engine = get_engine()
@@ -387,26 +396,31 @@ class SoundCoreApi:
             requested = "active"
         actual_mode = getattr(profile, "xtts_mode", "base") if requested == "active" else requested
         trained_model = None
-        if actual_mode == "trained":
+        if engine_id == "xtts" and actual_mode == "trained":
             trained_model = self._profile_manager.find_trained_xtts(profile_name)
             if not trained_model:
                 raise FileNotFoundError("Nie znaleziono kompletnego wytrenowanego modelu XTTS dla tego profilu.")
 
         stamp = datetime.now().strftime("%Y%m%d_%H%M%S_%f")[:-3]
         safe_style = (style or "natural").lower()
-        raw = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_{actual_mode}_{safe_style}.wav"
-        self._engine.clone_and_speak(
-            text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language,
-            trained_model=trained_model, style=safe_style, speed=float(speed or 1.0),
-        )
+        engine_tag = {"xtts":"xtts", "f5":"f5", "qwen":"qwen"}[engine_id]
+        mode_tag = actual_mode if engine_id == "xtts" else engine_tag
+        raw = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_{mode_tag}_{safe_style}.wav"
+        if engine_id == "xtts":
+            self._engine.clone_and_speak(
+                text=text, speaker_wav_path=profile.wav_path, output_path=str(raw), language=language,
+                trained_model=trained_model, style=safe_style, speed=float(speed or 1.0),
+            )
+            self._services["xtts"].update(state="ready", message=("Wytrenowany model profilu" if trained_model else "Bazowy XTTS v2"))
+        else:
+            self._external_engines.synthesize(engine_id, text, profile.wav_path, str(raw), language, float(speed or 1.0))
         final = raw
-        self._services["xtts"].update(state="ready", message=("Wytrenowany model profilu" if trained_model else "Bazowy XTTS v2"))
         if use_rvc:
             if self._rvc_engine is None:
                 self._services["rvc"].update(state="loading", message="Ładowanie RVC…")
                 from voice_engine.rvc_engine import get_rvc_engine
                 self._rvc_engine = get_rvc_engine()
-            rvc = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_{actual_mode}_{safe_style}_rvc.wav"
+            rvc = OUTPUT_DIR / f"speech_{profile_name}_{stamp}_{mode_tag}_{safe_style}_rvc.wav"
             self._rvc_engine.load_model(profile.rvc_model_path, profile.rvc_index_path)
             self._rvc_engine.convert(str(raw), str(rvc))
             self._services["rvc"].update(state="ready", message="Gotowy")
@@ -414,18 +428,28 @@ class SoundCoreApi:
         self._last_generated = str(final)
         history = self._add_synthesis_history(
             path=final, text=text.strip(), profile_name=profile_name, language=language, style=safe_style,
-            speed=float(speed or 1.0), model_mode=actual_mode, use_rvc=use_rvc, ab_group=ab_group,
+            speed=float(speed or 1.0), model_mode=(actual_mode if engine_id == "xtts" else engine_id), use_rvc=use_rvc, ab_group=ab_group, engine=engine_id,
         )
         self._notify("Synteza zakończona", f"Gotowy plik: {final.name}", "success")
-        return {"ok": True, "path": str(final), "name": final.name, "item": history, "model_mode": actual_mode}
+        return {"ok": True, "path": str(final), "name": final.name, "item": history, "model_mode": (actual_mode if engine_id == "xtts" else engine_id), "engine": engine_id}
 
-    def synthesize_ab(self, text: str, profile_name: str, language: str = "pl", style: str = "natural", speed: float = 1.0) -> dict:
-        if not self._profile_manager.find_trained_xtts(profile_name):
-            raise FileNotFoundError("Test A/B wymaga wytrenowanego modelu XTTS dla tego profilu.")
+    def synthesize_ab(self, text: str, profile_name: str, language: str = "pl", style: str = "natural", speed: float = 1.0,
+                      engine_a: str = "xtts_base", engine_b: str = "xtts_trained") -> dict:
         group = datetime.now().strftime("ab_%Y%m%d_%H%M%S_%f")
-        base = self.synthesize(text, profile_name, language, False, style, speed, "base", group)
-        trained = self.synthesize(text, profile_name, language, False, style, speed, "trained", group)
-        return {"ok": True, "group": group, "base": base, "trained": trained}
+        def run(spec: str) -> dict:
+            spec = (spec or "xtts_base").lower()
+            if spec == "xtts_base":
+                return self.synthesize(text, profile_name, language, False, style, speed, "base", group, "xtts")
+            if spec == "xtts_trained":
+                if not self._profile_manager.find_trained_xtts(profile_name):
+                    raise FileNotFoundError("Profil nie ma kompletnego wytrenowanego XTTS.")
+                return self.synthesize(text, profile_name, language, False, style, speed, "trained", group, "xtts")
+            if spec in {"f5", "qwen"}:
+                return self.synthesize(text, profile_name, language, False, style, speed, "active", group, spec)
+            raise ValueError(f"Nieznany wariant A/B: {spec}")
+        a = run(engine_a)
+        b = run(engine_b)
+        return {"ok": True, "group": group, "base": a, "trained": b, "engine_a": engine_a, "engine_b": engine_b}
 
     def play_last_generated(self) -> dict:
         if not self._last_generated or not os.path.isfile(self._last_generated):
@@ -435,6 +459,99 @@ class SoundCoreApi:
         return {"ok": True}
 
 
+
+    def voice_engine_status(self) -> dict:
+        return self._external_engines.status()
+
+    def install_voice_engine(self, engine_id: str) -> dict:
+        return self._external_engines.install_async(engine_id)
+
+    def voice_engine_install_status(self, engine_id: str) -> dict:
+        return self._external_engines.install_status(engine_id)
+
+    def rvc_status(self, profile_name: str = "") -> dict:
+        available = False
+        error = ""
+        try:
+            from voice_engine.rvc_engine import get_rvc_engine
+            available = get_rvc_engine().is_available()
+        except Exception as exc:
+            error = str(exc)
+        profile = self._profile_manager.get_profile(profile_name) if profile_name else None
+        return {
+            "ok": True, "available": available, "error": error,
+            "profile": profile_name,
+            "has_model": bool(profile and profile.has_rvc_model),
+            "model_path": getattr(profile, "rvc_model_path", None) if profile else None,
+            "index_path": getattr(profile, "rvc_index_path", None) if profile else None,
+            "install": dict(self._rvc_install_status),
+        }
+
+    def install_rvc_runtime(self) -> dict:
+        if self._rvc_install_status.get("state") in {"starting", "installing"}:
+            return dict(self._rvc_install_status)
+        self._rvc_install_status = {"state": "starting", "progress": 3, "message": "Przygotowanie instalacji RVC…"}
+        threading.Thread(target=self._install_rvc_worker, daemon=True, name="RVCInstall").start()
+        return dict(self._rvc_install_status)
+
+    def _install_rvc_worker(self) -> None:
+        try:
+            self._rvc_install_status = {"state": "installing", "progress": 15, "message": "Instalacja rvc-python…"}
+            flags = subprocess.CREATE_NO_WINDOW if os.name == "nt" and hasattr(subprocess, "CREATE_NO_WINDOW") else 0
+            p = subprocess.run([sys.executable, "-m", "pip", "install", "-r", str(BASE_DIR / "requirements-rvc.txt")],
+                               stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, creationflags=flags)
+            if p.returncode != 0:
+                tail = "\n".join((p.stdout or "").splitlines()[-25:])
+                raise RuntimeError(tail or f"pip exit {p.returncode}")
+            self._rvc_engine = None
+            self._rvc_install_status = {"state": "completed", "progress": 100, "message": "RVC zainstalowane. Uruchom ponownie SoundCore, jeśli status nie odświeży się automatycznie."}
+        except Exception as exc:
+            self._rvc_install_status = {"state": "error", "progress": 0, "message": str(exc)}
+
+    def rvc_install_status(self) -> dict:
+        return dict(self._rvc_install_status)
+
+    def select_rvc_model(self, profile_name: str) -> dict:
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Wybierz profil.")
+        win = webview.active_window()
+        if win is None:
+            raise RuntimeError("Okno SoundCore nie jest gotowe.")
+        dialog = getattr(webview.FileDialog, "OPEN", None) or getattr(webview.FileDialog, "LOAD")
+        selected = win.create_file_dialog(dialog, allow_multiple=False, file_types=("Model RVC (*.pth)", "Wszystkie pliki (*.*)"))
+        if not selected:
+            return {"ok": False, "cancelled": True}
+        path = selected[0]
+        updated = self._profile_manager.set_rvc_model(profile_name, path, profile.rvc_index_path)
+        self._profiles_cache = self._profiles_payload_full()
+        return {"ok": True, "profile": profile_name, "model_path": updated.rvc_model_path, "index_path": updated.rvc_index_path, "profiles": self._profiles_cache}
+
+    def select_rvc_index(self, profile_name: str) -> dict:
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Wybierz profil.")
+        if not profile.rvc_model_path:
+            raise ValueError("Najpierw wybierz model RVC .pth.")
+        win = webview.active_window()
+        dialog = getattr(webview.FileDialog, "OPEN", None) or getattr(webview.FileDialog, "LOAD")
+        selected = win.create_file_dialog(dialog, allow_multiple=False, file_types=("Indeks RVC (*.index)", "Wszystkie pliki (*.*)"))
+        if not selected:
+            return {"ok": False, "cancelled": True}
+        updated = self._profile_manager.set_rvc_model(profile_name, profile.rvc_model_path, selected[0])
+        self._profiles_cache = self._profiles_payload_full()
+        return {"ok": True, "profile": profile_name, "model_path": updated.rvc_model_path, "index_path": updated.rvc_index_path, "profiles": self._profiles_cache}
+
+    def clear_rvc_model(self, profile_name: str) -> dict:
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Wybierz profil.")
+        profile.rvc_model_path = None
+        profile.rvc_index_path = None
+        meta = Path(profile.folder) / "metadata.json"
+        meta.write_text(json.dumps(profile.__dict__, ensure_ascii=False, indent=2), encoding="utf-8")
+        self._profiles_cache = self._profiles_payload_full()
+        return {"ok": True, "profiles": self._profiles_cache}
 
     def profile_model_info(self, profile_name: str) -> dict:
         profile = self._profile_manager.get_profile(profile_name)
@@ -743,6 +860,9 @@ def run() -> None:
         api.delete_profile,
         api.synthesize,
         api.synthesize_ab,
+        api.voice_engine_status,
+        api.install_voice_engine,
+        api.voice_engine_install_status,
         api.list_synthesis_history,
         api.play_synthesis,
         api.delete_synthesis,
@@ -751,6 +871,12 @@ def run() -> None:
         api.profile_model_info,
         api.activate_trained_xtts,
         api.use_base_xtts,
+        api.rvc_status,
+        api.install_rvc_runtime,
+        api.rvc_install_status,
+        api.select_rvc_model,
+        api.select_rvc_index,
+        api.clear_rvc_model,
         api.list_profile_recordings,
         api.play_profile_recording,
         api.delete_profile_recording,

@@ -1,4 +1,4 @@
-> Current release: **0.5.5**
+> Current release: **0.6.0**
 
 # SoundCore – AI SoundSystem
 
@@ -6,6 +6,13 @@ Aplikacja desktopowa (Python) do klonowania głosu i syntezy mowy (TTS).
 Program nagrywa próbkę głosu z mikrofonu (wbudowanego lub USB), na jej
 podstawie "uczy się" barwy głosu i sposobu mówienia (dykcji, intonacji),
 a następnie potrafi odczytać dowolny tekst w tym głosie.
+
+## SoundCore 0.6 – Voice Engine Lab
+
+SoundCore obsługuje teraz warstwę wielu silników TTS. XTTS v2 pozostaje silnikiem stabilnym i domyślnym dla języka polskiego. F5-TTS oraz Qwen3-TTS mogą być instalowane w osobnych środowiskach pod `engine_runtime/`, dzięki czemu ich zależności nie zmieniają środowiska głównej aplikacji. W Studio można porównywać silniki A/B na tej samej referencji.
+
+RVC ma własny manager w zakładce Profile głosu: instalacja runtime, wybór `.pth`, opcjonalnego `.index` i status profilu. RVC jest post-processingiem — najpierw wybrany silnik TTS generuje mowę, a następnie RVC może zmienić jej barwę.
+
 
 ## Spis treści
 

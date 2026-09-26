@@ -17,7 +17,7 @@ from pathlib import Path
 
 APP_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CHANNEL_URL = "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/channel.json"
-PROTECTED_TOP_LEVEL = {"voice_profiles", "output", ".venv", "venv", ".git"}
+PROTECTED_TOP_LEVEL = {"voice_profiles", "output", ".venv", "venv", ".git", "engine_runtime"}
 
 
 class UpdateCancelled(RuntimeError):
@@ -122,7 +122,7 @@ from pathlib import Path
 payload = Path(sys.argv[1]).resolve()
 app = Path(sys.argv[2]).resolve()
 pid = int(sys.argv[3])
-protected = {"voice_profiles", "output", ".venv", "venv", ".git"}
+protected = {"voice_profiles", "output", ".venv", "venv", ".git", "engine_runtime"}
 
 for _ in range(120):
     try:

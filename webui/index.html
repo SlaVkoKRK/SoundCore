@@ -127,34 +127,38 @@
         <article class="card synthesis-main-card">
           <div class="card-head"><div><span class="eyebrow blue">STUDIO</span><h2>Synteza mowy</h2><p>Pełne studio generowania i porównywania modeli.</p></div><span id="synthModelBadge" class="status-pill neutral">AKTYWNY</span></div>
           <textarea id="synthText" class="editor tall">Witaj, to jest przykładowy tekst wypowiedziany moim własnym głosem.</textarea>
-          <div class="control-row three">
+          <div class="control-row four">
             <label><span>Profil głosu</span><select id="synthProfile"></select></label>
             <label><span>Język</span><select id="synthLanguage"><option value="pl">🇵🇱 Polski (PL)</option><option value="en">🇬🇧 English (EN)</option><option value="de">🇩🇪 Deutsch (DE)</option><option value="fr">🇫🇷 Français (FR)</option><option value="es">🇪🇸 Español (ES)</option></select></label>
-            <label><span>Model</span><select id="synthModelMode"><option value="active">Aktywny model profilu</option><option value="base">Bazowy XTTS v2</option><option value="trained">Wytrenowany XTTS</option></select></label>
+            <label><span>Silnik</span><select id="synthEngine"><option value="xtts">XTTS v2 · stabilny PL</option><option value="f5">F5-TTS · eksperymentalny</option><option value="qwen">Qwen3-TTS 0.6B · eksperymentalny</option></select></label>
+            <label><span>Model XTTS</span><select id="synthModelMode"><option value="active">Aktywny model profilu</option><option value="base">Bazowy XTTS v2</option><option value="trained">Wytrenowany XTTS</option></select></label>
           </div>
           <div class="control-row three">
             <label><span>Styl</span><select id="synthStyle"><option value="natural">Naturalny</option><option value="calm">Spokojny</option><option value="clear">Wyraźny</option></select></label>
             <label><span>Tempo</span><select id="synthSpeed"><option value="0.9">0.9×</option><option value="1" selected>1.0×</option><option value="1.1">1.1×</option></select></label>
             <label class="check synthesis-check"><input id="synthRvc" type="checkbox"/><span>Popraw barwę przez RVC</span></label>
           </div>
-          <div class="action-row"><button id="synthGenerate" class="btn btn-gradient">✦ Generuj</button><button id="synthGenerateAB" class="btn btn-dark">A/B Bazowy ↔ Wytrenowany</button><button id="synthPlay" class="btn btn-soft">▶ Odtwórz ostatni</button><div class="grow"></div><button id="synthDownload" class="btn btn-soft">⇩ Zapisz WAV</button></div>
+          <div class="action-row"><button id="synthGenerate" class="btn btn-gradient">✦ Generuj</button><button id="synthGenerateAB" class="btn btn-dark">Generuj A/B</button><button id="synthPlay" class="btn btn-soft">▶ Odtwórz ostatni</button><div class="grow"></div><button id="synthDownload" class="btn btn-soft">⇩ Zapisz WAV</button></div>
           <div id="synthResult" class="status-box">Brak wygenerowanego pliku.</div>
         </article>
         <article class="card ab-card">
-          <div class="card-head"><div><span class="eyebrow violet">A/B</span><h2>Porównanie modeli</h2><p>Ten sam tekst, te same ustawienia, dwa modele.</p></div></div>
-          <div id="abCompare" class="ab-compare-empty">Kliknij „A/B”, aby wygenerować obie wersje.</div>
+          <div class="card-head"><div><span class="eyebrow violet">A/B</span><h2>Porównanie silników</h2><p>Ten sam tekst, ta sama referencja i dwa różne silniki/model.</p></div></div>
+          <div class="control-row two engine-ab-controls"><label><span>A</span><select id="abEngineA"><option value="xtts_base">XTTS bazowy</option><option value="xtts_trained">XTTS wytrenowany</option><option value="f5">F5-TTS</option><option value="qwen">Qwen3-TTS</option></select></label><label><span>B</span><select id="abEngineB"><option value="xtts_trained" selected>XTTS wytrenowany</option><option value="xtts_base">XTTS bazowy</option><option value="f5">F5-TTS</option><option value="qwen">Qwen3-TTS</option></select></label></div>
+          <div id="abCompare" class="ab-compare-empty">Wybierz dwa warianty i kliknij „Generuj A/B”.</div>
         </article>
       </div>
       <article class="card synthesis-library-card">
         <div class="card-head"><div><span class="eyebrow green">BIBLIOTEKA</span><h2>Historia syntezy</h2><p>Wygenerowane pliki zostają zapisane, aby można było je odsłuchiwać i porównywać.</p></div><button id="refreshSynthHistory" class="btn btn-soft small">↻ Odśwież</button></div>
         <div id="synthesisHistory" class="synthesis-history"><div class="status-box">Brak wygenerowanych plików.</div></div>
       </article>
+      <article class="card engine-lab-card"><div class="card-head"><div><span class="eyebrow green">VOICE ENGINE LAB</span><h2>Silniki głosu</h2><p>XTTS jest stabilnym silnikiem polskim. Pozostałe uruchamiaj eksperymentalnie i porównuj A/B.</p></div><button id="refreshVoiceEngines" class="btn btn-soft small">↻ Odśwież</button></div><div id="voiceEngineList" class="engine-list"><div class="status-box">Sprawdzanie silników…</div></div></article>
     </section>
 
     <section id="page-profiles" class="page">
       <div class="page-grid profiles-layout">
         <article class="card"><div class="card-head"><div><span class="eyebrow blue">NAGRANIE REFERENCYJNE</span><h2>Nowy profil głosu</h2><p>Nagraj czystą próbkę głosu jako bazę syntezy.</p></div></div><div class="form-grid"><label><span>Nazwa profilu</span><input id="newProfileName" placeholder="np. Sławomir PL"/></label><label><span>Mikrofon</span><select id="profileDevice"></select></label><label><span>Długość</span><select id="profileDuration"><option value="10">10 sekund</option><option value="20" selected>20 sekund</option><option value="30">30 sekund</option><option value="45">45 sekund</option></select></label></div><label class="reading-block"><span>Tekst do przeczytania <small id="profilePromptMeta">dopasowany do 20 s</small></span><textarea id="profileReadingText" class="sentence" readonly></textarea></label><div class="action-row"><button id="recordProfileBtn" class="btn btn-gradient">● Rozpocznij nagrywanie</button><button id="profileNewPrompt" class="btn btn-soft">↻ Inny tekst</button></div><div id="recordProfileStatus" class="status-box">Gotowy do nagrywania. Czytaj tekst naturalnie i utrzymuj równe tempo.</div></article>
         <article class="card"><div class="card-head"><div><span class="eyebrow violet">BIBLIOTEKA</span><h2>Twoje profile</h2><p>Odsłuchuj i zarządzaj zapisanymi głosami.</p></div></div><div id="profilesTable" class="profiles-table"></div></article>
+        <article class="card rvc-manager-card"><div class="card-head"><div><span class="eyebrow blue">RVC</span><h2>Poprawa barwy głosu</h2><p>Opcjonalny post-processing gotowego audio przez wytrenowany model RVC.</p></div><span id="rvcStatusBadge" class="status-pill neutral">NIEAKTYWNE</span></div><div class="form-grid"><label><span>Profil</span><select id="rvcProfile"></select></label></div><div id="rvcRuntimeStatus" class="status-box">Sprawdzanie RVC…</div><div class="rvc-paths"><div><span>Model .pth</span><b id="rvcModelPath">—</b></div><div><span>Indeks .index</span><b id="rvcIndexPath">—</b></div></div><div class="action-row"><button id="installRvcBtn" class="btn btn-dark">Zainstaluj RVC</button><button id="selectRvcModelBtn" class="btn btn-gradient">Wybierz .pth</button><button id="selectRvcIndexBtn" class="btn btn-soft">Wybierz .index</button><button id="clearRvcBtn" class="btn btn-danger-outline">Wyczyść</button></div><div class="status-box subtle">RVC nie jest TTS. Najpierw SoundCore generuje mowę wybranym silnikiem, a potem RVC zmienia jej barwę. Do działania potrzebujesz wcześniej wytrenowanego modelu <b>.pth</b>; plik <b>.index</b> jest opcjonalny.</div></article>
         <article class="card recordings-card"><div class="card-head"><div><span class="eyebrow green">BAZA NAGRAŃ</span><h2>Nagrania profilu</h2><p>Referencja, próbki treningowe oraz import audio i wideo.</p></div><div class="recording-actions"><select id="recordingsProfile"></select><button id="importMediaBtn" class="btn btn-gradient small">＋ Importuj audio / film</button></div></div><div id="recordingsStats" class="recordings-stats">Wybierz profil, aby wyświetlić jego nagrania.</div><div id="recordingsList" class="recordings-list"></div></article>
       </div>
     </section>
