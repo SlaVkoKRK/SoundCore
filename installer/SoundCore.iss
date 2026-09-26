@@ -5,7 +5,7 @@
 #define MyAppName "SoundCore"
 #define MyAppPublisher "SoundCore"
 #define MyAppURL "https://github.com/SlaVkoKRK/SoundCore"
-#define MyAppExe "venv\\Scripts\\pythonw.exe"
+#define MyAppExe "venv\Scripts\pythonw.exe"
 
 [Setup]
 AppId={{E43226CF-20AB-4A41-8E9F-6BB2B659D6C7}
@@ -46,12 +46,12 @@ Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createalls
 Source: "bootstrap.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\SoundCore"; Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"
-Name: "{autodesktop}\SoundCore"; Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"; Tasks: desktopicon
+Name: "{autoprograms}\SoundCore"; Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"; Check: SoundCoreRuntimeReady
+Name: "{autodesktop}\SoundCore"; Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"; Tasks: desktopicon; Check: SoundCoreRuntimeReady
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\installer\bootstrap.ps1"" -AppDir ""{app}"""; StatusMsg: "Przygotowywanie srodowiska SoundCore. To moze potrwac przy pierwszej instalacji..."; Flags: waituntilterminated runhidden
-Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; Description: "Uruchom SoundCore"; Flags: nowait postinstall skipifsilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\installer\bootstrap.ps1"" -AppDir ""{app}"""; StatusMsg: "Przygotowywanie srodowiska SoundCore. Pierwsza instalacja moze potrwac kilka minut..."; Flags: waituntilterminated runhidden; AfterInstall: VerifyBootstrap
+Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; Description: "Uruchom SoundCore"; Flags: nowait postinstall skipifsilent; Check: SoundCoreRuntimeReady
 
 [UninstallDelete]
 Type: filesandordirs; Name: "{app}\venv"
@@ -59,7 +59,26 @@ Type: filesandordirs; Name: "{app}\cache"
 Type: files; Name: "{app}\.installed"
 
 [Code]
-function PrepareToInstall(var NeedsRestart: Boolean): String;
+function SoundCoreRuntimeReady(): Boolean;
 begin
-  Result := '';
+  Result :=
+    FileExists(ExpandConstant('{app}\venv\Scripts\python.exe')) and
+    FileExists(ExpandConstant('{app}\venv\Scripts\pythonw.exe')) and
+    FileExists(ExpandConstant('{app}\.installed'));
+end;
+
+procedure VerifyBootstrap();
+var
+  LogPath: String;
+begin
+  if not SoundCoreRuntimeReady() then
+  begin
+    LogPath := ExpandConstant('{app}\install.log');
+    MsgBox(
+      'Nie udalo sie przygotowac srodowiska SoundCore.' + #13#10 + #13#10 +
+      'Instalator nie uruchomi aplikacji ani nie utworzy niedzialajacych skrotow.' + #13#10 +
+      'Szczegoly znajduja sie w:' + #13#10 + LogPath,
+      mbError, MB_OK);
+    RaiseException('SoundCore runtime bootstrap failed. See ' + LogPath);
+  end;
 end;

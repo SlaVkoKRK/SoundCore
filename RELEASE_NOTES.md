@@ -1,17 +1,11 @@
-# SoundCore 0.4.0
+# SoundCore 0.4.1
 
-## Windows installer
+## Windows installer hotfix
 
-- Added a native Windows installer project based on Inno Setup.
-- GitHub Actions automatically builds `SoundCore-Setup-<version>.exe` when a GitHub Release is published.
-- Per-user installation to `%LOCALAPPDATA%\Programs\SoundCore` without requiring administrator rights for SoundCore itself.
-- Automatic Python 3.10 environment creation and dependency installation.
-- Automatic Microsoft WebView2 Runtime bootstrap.
-- NVIDIA GPU detection with PyTorch CUDA 12.4 installation and CPU fallback.
-- Desktop and Start menu shortcuts with the SoundCore icon.
-- Existing voice profiles and user recordings are not removed by normal application updates.
-- The installer verifies the Python runtime before finishing.
-
-## Distribution
-
-The regular SoundCore release/update package remains unchanged. The installer is an additional GitHub Release asset intended for clean installations on new Windows systems.
+- Fixed the Windows launcher path used by Inno Setup (`venv\Scripts\pythonw.exe`).
+- The installer now verifies `python.exe`, `pythonw.exe` and the `.installed` marker before creating shortcuts or launching SoundCore.
+- A failed bootstrap can no longer fall through to a misleading `CreateProcess; code 2` error.
+- Bootstrap failures now stop installation with a clear message pointing to `install.log`.
+- Added detailed stdout/stderr logging for Python, pip, virtual-environment and runtime-verification steps.
+- Added explicit validation immediately after venv creation and again before setup completion.
+- Existing application update behavior remains unchanged.
