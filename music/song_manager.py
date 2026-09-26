@@ -110,7 +110,7 @@ class SongManager:
             return self.espeak_install_status()
         if self._espeak_install_status.get("state") in {"resolving", "downloading", "installing"}:
             return self.espeak_install_status()
-        self._espeak_install_status = {"state": "resolving", "progress": 5, "message": "Szukam oficjalnego instalatora eSpeak NG x64…"}
+        self._espeak_install_status = {"state": "resolving", "progress": 5, "message": "Szukam oficjalnego instalatora eSpeak NG dla Windows…"}
         threading.Thread(target=self._install_espeak_worker, name="SoundCoreEspeakInstall", daemon=True).start()
         return self.espeak_install_status()
 
@@ -121,13 +121,23 @@ class SongManager:
             with urllib.request.urlopen(req, timeout=30) as resp:
                 release = json.loads(resp.read().decode("utf-8"))
             assets = release.get("assets") or []
-            asset = next((a for a in assets if str(a.get("name", "")).lower().endswith("x64.msi")), None)
+            
+            # eSpeak NG 1.52.0 publishes the Windows installer simply as
+            # "espeak-ng.msi". Older releases used names containing "x64".
+            # Prefer the canonical current name, then an x64 MSI, then any MSI.
+            def _asset_name(a):
+                return str(a.get("name", "")).lower()
+            asset = next((a for a in assets if _asset_name(a) == "espeak-ng.msi"), None)
+            if asset is None:
+                asset = next((a for a in assets if _asset_name(a).endswith(".msi") and "x64" in _asset_name(a)), None)
+            if asset is None:
+                asset = next((a for a in assets if _asset_name(a).endswith(".msi")), None)
             if not asset:
                 raise RuntimeError("Nie znaleziono oficjalnego instalatora eSpeak NG x64 w najnowszym wydaniu GitHub.")
             url = asset.get("browser_download_url")
             if not url:
                 raise RuntimeError("GitHub nie zwrócił adresu instalatora eSpeak NG.")
-            target = self.runtime_dir / str(asset.get("name") or "espeak-ng-x64.msi")
+            target = self.runtime_dir / str(asset.get("name") or "espeak-ng.msi")
             self._espeak_install_status = {"state": "downloading", "progress": 20, "message": "Pobieranie oficjalnego instalatora eSpeak NG…"}
             req = urllib.request.Request(url, headers={"User-Agent": "SoundCore/0.7.4"})
             with urllib.request.urlopen(req, timeout=120) as src, target.open("wb") as dst:

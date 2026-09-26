@@ -1,3 +1,5 @@
+**Current release: 0.7.5**
+
 
 ## Song Studio (0.7.0)
 SoundCore zawiera lokalne studio piosenek z projektami, strukturą utworu, tekstem, BPM, tonacją, metrum, harmonią, timeline LRC, referencją audio oraz edycją wybranych fragmentów. Pierwszym zintegrowanym silnikiem jest DiffRhythm, instalowany do odizolowanego `engine_runtime/music/diffrhythm`. Projekty i rendery są zapisywane w `songs/` i chronione przez updater.

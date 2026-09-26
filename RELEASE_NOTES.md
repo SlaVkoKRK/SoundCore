@@ -1,3 +1,11 @@
+# SoundCore 0.7.5
+
+## eSpeak NG installer fix
+- Naprawiono wykrywanie oficjalnego instalatora eSpeak NG 1.52.0 dla Windows.
+- SoundCore obsługuje teraz bieżącą nazwę `espeak-ng.msi`.
+- Dodano fallback dla starszych nazw `*x64*.msi` oraz dowolnego oficjalnego pliku `.msi`.
+- Komunikat instalatora nie zakłada już, że nazwa pliku musi zawierać `x64`.
+
 # SoundCore 0.7.4
 
 ## Automatyczna instalacja eSpeak NG
