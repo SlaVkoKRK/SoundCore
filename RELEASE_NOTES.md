@@ -1,3 +1,10 @@
+# SoundCore 0.5.1
+
+- Naprawiono błąd finalizacji treningu `expected str, bytes or os.PathLike object, not NoneType`.
+- `trainer.output_path=None` nie powoduje już `Path(None)` po zakończeniu treningu.
+- Dodano bezpieczny fallback do katalogu profilu oraz rekursywne wyszukiwanie `best_model.pth`, `checkpoint_*.pth` i `config.json`.
+- Udany trening nie jest oznaczany jako błąd tylko dlatego, że Coqui nie zwróciło ścieżki `output_path`.
+
 # SoundCore 0.5.0
 
 ## Aktualizacje

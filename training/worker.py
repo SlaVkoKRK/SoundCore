@@ -231,12 +231,20 @@ def main(job_path: str) -> None:
     )
     # Coqui additionally writes its native trainer log into the run directory.
     trainer.fit()
-    run_path = Path(getattr(trainer, "output_path", out_path))
+    run_path = Path(getattr(trainer, "output_path", None) or out_path)
     best = run_path / "best_model.pth"
     if not best.exists():
-        ckpts = sorted(run_path.glob("checkpoint_*.pth"), key=lambda x: x.stat().st_mtime)
-        best = ckpts[-1] if ckpts else best
-    cfg = run_path / "config.json"
+        best_candidates = list(run_path.rglob("best_model.pth"))
+        if best_candidates:
+            best = max(best_candidates, key=lambda x: x.stat().st_mtime)
+        else:
+            ckpts = list(run_path.rglob("checkpoint_*.pth"))
+            best = max(ckpts, key=lambda x: x.stat().st_mtime) if ckpts else best
+    cfg = best.parent / "config.json" if best.exists() else run_path / "config.json"
+    if not cfg.exists():
+        cfg_candidates = list(run_path.rglob("config.json"))
+        if cfg_candidates:
+            cfg = max(cfg_candidates, key=lambda x: x.stat().st_mtime)
     vocab = checkpoints / "vocab.json"
     trained_model = None
     if best.exists() and cfg.exists() and vocab.exists():
