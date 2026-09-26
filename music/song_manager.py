@@ -68,6 +68,7 @@ class SongManager:
         self.runtime_dir.mkdir(parents=True, exist_ok=True)
         self._install_status = {"state": "idle", "progress": 0, "message": "DiffRhythm nie jest instalowany."}
         self._generation_status = {"state": "idle", "progress": 0, "message": "Brak aktywnego renderu."}
+        self._espeak_install_status = {"state": "idle", "progress": 0, "message": "eSpeak NG nie jest instalowany."}
         self._install_lock = threading.Lock()
         self._generation_lock = threading.Lock()
         self._install_cancel = threading.Event()
@@ -99,6 +100,64 @@ class SongManager:
             if dll.exists():
                 return {"ok": True, "path": str(folder), "dll": str(dll)}
         return {"ok": False, "path": None, "dll": None}
+
+    def espeak_install_status(self) -> dict:
+        return {"ok": True, **self._espeak_install_status, "detected": self._espeak()["ok"]}
+
+    def install_espeak_ng(self) -> dict:
+        if self._espeak()["ok"]:
+            self._espeak_install_status = {"state": "completed", "progress": 100, "message": "eSpeak NG jest już zainstalowany."}
+            return self.espeak_install_status()
+        if self._espeak_install_status.get("state") in {"resolving", "downloading", "installing"}:
+            return self.espeak_install_status()
+        self._espeak_install_status = {"state": "resolving", "progress": 5, "message": "Szukam oficjalnego instalatora eSpeak NG x64…"}
+        threading.Thread(target=self._install_espeak_worker, name="SoundCoreEspeakInstall", daemon=True).start()
+        return self.espeak_install_status()
+
+    def _install_espeak_worker(self) -> None:
+        try:
+            api_url = "https://api.github.com/repos/espeak-ng/espeak-ng/releases/latest"
+            req = urllib.request.Request(api_url, headers={"User-Agent": "SoundCore/0.7.4", "Accept": "application/vnd.github+json"})
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                release = json.loads(resp.read().decode("utf-8"))
+            assets = release.get("assets") or []
+            asset = next((a for a in assets if str(a.get("name", "")).lower().endswith("x64.msi")), None)
+            if not asset:
+                raise RuntimeError("Nie znaleziono oficjalnego instalatora eSpeak NG x64 w najnowszym wydaniu GitHub.")
+            url = asset.get("browser_download_url")
+            if not url:
+                raise RuntimeError("GitHub nie zwrócił adresu instalatora eSpeak NG.")
+            target = self.runtime_dir / str(asset.get("name") or "espeak-ng-x64.msi")
+            self._espeak_install_status = {"state": "downloading", "progress": 20, "message": "Pobieranie oficjalnego instalatora eSpeak NG…"}
+            req = urllib.request.Request(url, headers={"User-Agent": "SoundCore/0.7.4"})
+            with urllib.request.urlopen(req, timeout=120) as src, target.open("wb") as dst:
+                total = int(src.headers.get("Content-Length") or 0)
+                done = 0
+                while True:
+                    chunk = src.read(1024 * 256)
+                    if not chunk:
+                        break
+                    dst.write(chunk)
+                    done += len(chunk)
+                    pct = 20 + int((done / total) * 45) if total else 45
+                    self._espeak_install_status = {"state": "downloading", "progress": min(65, pct), "message": "Pobieranie eSpeak NG…"}
+            if os.name != "nt":
+                raise RuntimeError("Automatyczna instalacja eSpeak NG jest dostępna tylko w Windows.")
+            self._espeak_install_status = {"state": "installing", "progress": 70, "message": "Uruchomiono instalator eSpeak NG. Dokończ instalację w oknie Windows."}
+            proc = subprocess.Popen(["msiexec.exe", "/i", str(target)])
+            code = proc.wait()
+            if code not in (0, 3010):
+                raise RuntimeError(f"Instalator eSpeak NG zakończył się kodem {code}.")
+            # MSI może potrzebować chwili, zanim pliki będą widoczne.
+            for _ in range(20):
+                if self._espeak()["ok"]:
+                    break
+                time.sleep(0.5)
+            if not self._espeak()["ok"]:
+                raise RuntimeError("Instalacja zakończyła się, ale SoundCore nadal nie widzi libespeak-ng.dll. Uruchom ponownie SoundCore.")
+            self._espeak_install_status = {"state": "completed", "progress": 100, "message": "eSpeak NG zainstalowany i wykryty. DiffRhythm jest gotowy do użycia."}
+        except Exception as exc:
+            self._espeak_install_status = {"state": "error", "progress": 0, "message": str(exc)}
 
     def engine_status(self) -> dict:
         espeak = self._espeak()

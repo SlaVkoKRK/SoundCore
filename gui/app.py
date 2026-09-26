@@ -849,6 +849,12 @@ class SoundCoreApi:
     def music_engine_status(self) -> dict:
         return self._songs.engine_status()
 
+    def install_espeak_ng(self) -> dict:
+        return self._songs.install_espeak_ng()
+
+    def espeak_install_status(self) -> dict:
+        return self._songs.espeak_install_status()
+
     def install_music_engine(self) -> dict:
         return self._songs.install_engine()
 
@@ -983,6 +989,8 @@ def run() -> None:
         api.delete_song_project,
         api.song_lrc_preview,
         api.music_engine_status,
+        api.install_espeak_ng,
+        api.espeak_install_status,
         api.install_music_engine,
         api.music_engine_install_status,
         api.cancel_music_engine_install,

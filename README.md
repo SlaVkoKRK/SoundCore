@@ -338,6 +338,6 @@ Po instalacji dostępne są dwa skróty:
 Można też uruchomić ręcznie `repair_update.cmd` z katalogu SoundCore. Dane użytkownika i pobrane modele są zachowywane. Backup kodu trafia do `_repair_backups`.
 
 
-## SoundCore 0.7.3
+## SoundCore 0.7.4
 
 Instalator DiffRhythm pokazuje teraz na żywo log `pip`, postęp i aktywność procesu, nie otwiera pustego okna konsoli oraz może zostać przerwany z poziomu Song Studio.

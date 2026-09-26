@@ -1,3 +1,12 @@
+# SoundCore 0.7.4
+
+## Automatyczna instalacja eSpeak NG
+- W Song Studio pojawił się przycisk „Pobierz i zainstaluj eSpeak NG”, gdy biblioteka nie jest wykryta.
+- SoundCore pobiera oficjalny instalator x64 z najnowszego wydania `espeak-ng/espeak-ng` na GitHubie.
+- Instalator MSI uruchamia się bez ręcznego szukania pliku.
+- Po instalacji SoundCore automatycznie ponownie wykrywa `libespeak-ng.dll` i odświeża status DiffRhythm.
+- Stan pobierania i instalacji eSpeak NG jest widoczny w Song Studio.
+
 # SoundCore 0.7.3
 
 ## DiffRhythm installer hotfix
