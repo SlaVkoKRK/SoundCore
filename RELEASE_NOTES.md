@@ -1,14 +1,12 @@
-# SoundCore 0.3.5
+# SoundCore 0.3.6
 
-## UI
-- jasny, subtelny scrollbar zamiast czarnego paska WebView2 przy zmaksymalizowanym oknie,
-- dodatkowe sekcje tekstu do czytania w Profilach głosu i Treningu modelu,
-- możliwość utworzenia profilu bez opuszczania zakładki Trening modelu.
+## Prompt history + topbar interactions
 
-## Dynamiczne teksty nagraniowe
-- nowa lokalna baza polskich tekstów podzielona na kategorie: naturalne, fonetyczne, liczby, pytania, prozodia i techniczne,
-- tekst jest składany dynamicznie do zadanej długości nagrania,
-- profil referencyjny preferuje naturalną, ciągłą mowę,
-- dataset treningowy rotuje materiał fonetyczny i prozodyczny,
-- przy zmianie czasu próbki tekst przelicza się automatycznie,
-- przycisk „Inny tekst” / „Następny tekst” pobiera kolejny wariant z backendu.
+- trwała historia tekstów per profil w `voice_profiles/<profil>/prompt_history.json`,
+- generator najpierw wybiera teksty, których dany profil jeszcze nie czytał,
+- historia obejmuje referencję profilu oraz próbki datasetu i przeżywa restart/aktualizację,
+- odświeżona ikona powiadomień SVG oraz wyraźny stan nieprzeczytanych,
+- działająca wyszukiwarka globalna z `Ctrl+K`, wynikami i nawigacją,
+- usunięty niedziałający skrót `⌘ K` niepasujący do Windows,
+- działające menu użytkownika: Ustawienia, Folder SoundCore, Restart, wersja i ścieżka instalacji,
+- wyszukiwarka znajduje moduły SoundCore oraz profile głosowe.

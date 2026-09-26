@@ -248,3 +248,11 @@ Warto umieć krótko wyjaśnić:
 ## Dynamiczne teksty nagraniowe
 
 Od wersji 0.3.5 SoundCore korzysta z lokalnej bazy polskich promptów nagraniowych. Backend dobiera i łączy fragmenty do wybranego czasu próbki. Profile referencyjne otrzymują tekst naturalny, a dataset treningowy rotuje materiał fonetyczny, liczby, pytania, prozodię i tekst techniczny. Bazę można rozszerzać w `training/prompts_pl.json`.
+
+### Historia tekstów per profil
+
+Od wersji 0.3.6 SoundCore zapisuje użyte prompty w `voice_profiles/<profil>/prompt_history.json`. Generator preferuje zdania, których dany profil jeszcze nie czytał. Historia jest lokalna, należy do profilu i jest zachowywana przez system aktualizacji razem z `voice_profiles`.
+
+### Wyszukiwanie i menu użytkownika
+
+Globalną wyszukiwarkę otwiera `Ctrl+K`. Wyszukuje moduły SoundCore i profile głosowe. Menu użytkownika w prawym górnym rogu udostępnia ustawienia, katalog SoundCore, restart programu i informacje o wersji.

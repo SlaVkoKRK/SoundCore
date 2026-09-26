@@ -24,7 +24,7 @@ from system.hardware import detect_hardware
 from system.cuda_manager import CudaRepairManager
 from system.windows_integration import prepare_windows_process, setup_windows_shell_async
 from training.dataset import add_sample, get_stats
-from training.text_bank import build_prompt
+from training.text_bank import build_prompt, remember_prompt
 from training.manager import TrainingManager
 from updater.update_manager import check_for_update, download_update, launch_apply
 from voice_engine.rvc_engine import get_rvc_engine
@@ -34,7 +34,7 @@ BASE_DIR = Path(__file__).resolve().parents[1]
 WEBUI_DIR = BASE_DIR / "webui"
 OUTPUT_DIR = BASE_DIR / "output"
 APP_ICON = BASE_DIR / "gui" / "assets" / "soundcore.ico"
-APP_VERSION = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip() if (BASE_DIR / "VERSION").exists() else "0.3.3"
+APP_VERSION = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip() if (BASE_DIR / "VERSION").exists() else "0.3.6"
 CHANNEL_URL = "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/channel.json"
 OUTPUT_DIR.mkdir(exist_ok=True)
 
@@ -88,8 +88,13 @@ class SoundCoreApi:
         self._notify("Ponowne wykrywanie GPU", self._hardware.note, "success" if self._hardware.torch_cuda_available else "warning")
         return self._hardware.to_dict()
 
-    def get_reading_prompt(self, duration: int, purpose: str = "training", nonce: int = 0) -> dict:
-        return build_prompt(duration, purpose, nonce)
+    def get_reading_prompt(self, duration: int, purpose: str = "training", nonce: int = 0, profile_name: str = "") -> dict:
+        profile_folder = None
+        if profile_name:
+            profile = self._profile_manager.get_profile(profile_name)
+            if profile is not None:
+                profile_folder = profile.folder
+        return build_prompt(duration, purpose, nonce, profile_folder=profile_folder)
 
     def get_devices(self) -> list[dict]:
         result = []
@@ -121,7 +126,7 @@ class SoundCoreApi:
             n["read"] = True
         return {"ok": True}
 
-    def record_profile(self, name: str, duration: int, device_index: int) -> dict:
+    def record_profile(self, name: str, duration: int, device_index: int, reading_text: str = "") -> dict:
         name = (name or "").strip()
         if not name:
             raise ValueError("Podaj nazwę profilu.")
@@ -129,6 +134,8 @@ class SoundCoreApi:
         audio = record_audio(duration=duration, device=int(device_index))
         cleaned = preprocess_pipeline(audio, DEFAULT_SAMPLERATE)
         profile = self._profile_manager.save_profile(name, cleaned, DEFAULT_SAMPLERATE, overwrite=True)
+        if reading_text.strip():
+            remember_prompt(profile.folder, reading_text, "profile")
         self._notify("Profil zapisany", f"Profil '{name}' jest gotowy do użycia.", "success")
         return {"ok": True, "profile": profile.name, "duration": profile.duration_seconds, "profiles": self._profiles_payload()}
 
@@ -140,6 +147,7 @@ class SoundCoreApi:
         audio = record_audio(duration=duration, device=int(device_index))
         cleaned = preprocess_pipeline(audio, DEFAULT_SAMPLERATE)
         sample = add_sample(profile.folder, cleaned, DEFAULT_SAMPLERATE, text)
+        remember_prompt(profile.folder, text, "training")
         stats = get_stats(profile.folder)
         self._notify("Próbka treningowa", f"Dodano próbkę {sample['id']} do profilu {profile_name}.", "success")
         return {"ok": True, "sample": sample, "dataset": stats.to_dict()}
@@ -201,6 +209,23 @@ class SoundCoreApi:
         status = self._cuda_repair.start()
         self._notify("Naprawa CUDA", "Rozpoczęto instalację oficjalnego PyTorch 2.5.1 z CUDA 12.4. SoundCore może działać w tle podczas pobierania.", "info")
         return status
+
+
+    def open_data_folder(self) -> dict:
+        path = str(BASE_DIR)
+        if os.name == "nt":
+            os.startfile(path)
+        else:
+            subprocess.Popen(["xdg-open", path])
+        return {"ok": True, "path": path}
+
+    def get_user_menu_info(self) -> dict:
+        return {
+            "name": getpass.getuser(),
+            "role": "Użytkownik lokalny",
+            "version": APP_VERSION,
+            "base_dir": str(BASE_DIR),
+        }
 
     def restart_app(self) -> dict:
         subprocess.Popen([sys.executable, str(BASE_DIR / "main.py")], cwd=str(BASE_DIR), creationflags=(subprocess.CREATE_NEW_PROCESS_GROUP if os.name == "nt" else 0))
@@ -284,6 +309,8 @@ def run() -> None:
         api.play_last_generated,
         api.cuda_repair_status,
         api.install_cuda_runtime,
+        api.open_data_folder,
+        api.get_user_menu_info,
         api.restart_app,
         api.start_training,
         api.training_status,

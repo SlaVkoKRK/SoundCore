@@ -40,18 +40,33 @@
         <p id="pageSubtitle">Twórz, trenuj i zarządzaj swoimi modelami głosu.</p>
       </div>
       <div class="top-actions">
-        <div class="search"><span>⌕</span><input id="globalSearch" placeholder="Szukaj profili, nagrań, projektów..."/><kbd>⌘ K</kbd></div>
+        <div class="search-wrap">
+          <div class="search"><span class="search-icon">⌕</span><input id="globalSearch" autocomplete="off" placeholder="Szukaj w SoundCore..."/><kbd>Ctrl K</kbd></div>
+          <div id="searchResults" class="search-results hidden"></div>
+        </div>
         <div class="notification-wrap">
-          <button id="bellBtn" class="icon-btn" title="Powiadomienia">♢<span id="bellBadge" class="badge hidden">0</span></button>
+          <button id="bellBtn" class="icon-btn bell-button" title="Powiadomienia" aria-label="Powiadomienia">
+            <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></svg>
+            <span id="bellBadge" class="badge hidden">0</span>
+          </button>
           <div id="notificationPanel" class="notification-panel hidden">
             <div class="panel-head"><div><b>Powiadomienia</b><small id="notificationSummary">Brak nowych</small></div><button id="markReadBtn">Oznacz jako przeczytane</button></div>
             <div id="notificationList" class="notification-list"></div>
           </div>
         </div>
-        <div class="user-box">
-          <div id="userAvatar" class="avatar">U</div>
-          <div class="user-copy"><b id="userName">Użytkownik</b><span id="userRole">Lokalny profil</span></div>
-          <span class="chev">⌄</span>
+        <div class="user-wrap">
+          <button id="userMenuBtn" class="user-box" aria-haspopup="true" aria-expanded="false">
+            <div id="userAvatar" class="avatar">U</div>
+            <div class="user-copy"><b id="userName">Użytkownik</b><span id="userRole">Lokalny profil</span></div>
+            <span class="chev">⌄</span>
+          </button>
+          <div id="userMenu" class="user-menu hidden">
+            <div class="user-menu-head"><div id="userMenuAvatar" class="avatar">U</div><div><b id="userMenuName">Użytkownik</b><small id="userMenuVersion">SoundCore</small></div></div>
+            <button id="userSettingsBtn"><span>⚙</span><div><b>Ustawienia</b><small>Konfiguracja SoundCore</small></div></button>
+            <button id="userFolderBtn"><span>📁</span><div><b>Folder SoundCore</b><small>Otwórz katalog danych</small></div></button>
+            <button id="userRestartBtn"><span>↻</span><div><b>Uruchom ponownie</b><small>Restart aplikacji</small></div></button>
+            <div class="user-menu-foot"><span id="userMenuPath">—</span></div>
+          </div>
         </div>
       </div>
     </header>
