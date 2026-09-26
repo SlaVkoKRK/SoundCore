@@ -27,6 +27,16 @@ jobs:
         shell: pwsh
         run: choco install innosetup -y --no-progress
 
+      - name: Validate installer sources
+        shell: pwsh
+        run: |
+          $v = (Get-Content VERSION -Raw).Trim()
+          if ($v -ne "${{ steps.version.outputs.version }}") { throw "VERSION mismatch" }
+          $bootstrap = Get-Content installer\bootstrap.ps1 -Raw
+          if ($bootstrap -match '\\$Label:') { throw "bootstrap.ps1 still contains invalid PowerShell interpolation `$Label:`" }
+          if ($bootstrap -notmatch '\\$\{Label\}:') { throw "bootstrap.ps1 missing fixed `${Label}:` interpolation" }
+          Write-Host "Installer sources validated for $v"
+
       - name: Build installer
         shell: pwsh
         run: |

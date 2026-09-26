@@ -13,7 +13,7 @@ function Log([string]$Message) {
 }
 
 function Run([string]$Exe, [string[]]$Args, [string]$Label) {
-    Log "$Label: $Exe $($Args -join ' ')"
+    Log "${Label}: $Exe $($Args -join ' ')"
     if (-not (Test-Path $Exe) -and -not (Get-Command $Exe -ErrorAction SilentlyContinue)) {
         throw "$Label failed: executable not found: $Exe"
     }

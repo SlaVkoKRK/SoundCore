@@ -50,7 +50,7 @@ Name: "{autoprograms}\SoundCore"; Filename: "{app}\{#MyAppExe}"; Parameters: """
 Name: "{autodesktop}\SoundCore"; Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"; Tasks: desktopicon; Check: SoundCoreRuntimeReady
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\installer\bootstrap.ps1"" -AppDir ""{app}"""; StatusMsg: "Przygotowywanie srodowiska SoundCore. Pierwsza instalacja moze potrwac kilka minut..."; Flags: waituntilterminated runhidden; AfterInstall: VerifyBootstrap
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\installer\bootstrap.ps1"" -AppDir ""{app}"""; StatusMsg: "Przygotowywanie srodowiska SoundCore. Pierwsza instalacja moze potrwac kilka minut..."; Flags: waituntilterminated runhidden; BeforeInstall: PrepareBootstrapLog; AfterInstall: VerifyBootstrap
 Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; Description: "Uruchom SoundCore"; Flags: nowait postinstall skipifsilent; Check: SoundCoreRuntimeReady
 
 [UninstallDelete]
@@ -67,6 +67,22 @@ begin
     FileExists(ExpandConstant('{app}\.installed'));
 end;
 
+
+procedure PrepareBootstrapLog();
+var
+  LogPath, PSPath, ScriptPath, Msg: String;
+begin
+  LogPath := ExpandConstant('{app}\setup-bootstrap.log');
+  PSPath := ExpandConstant('{sys}\WindowsPowerShell\v1.0\powershell.exe');
+  ScriptPath := ExpandConstant('{app}\installer\bootstrap.ps1');
+  Msg := 'SoundCore installer bootstrap diagnostic' + #13#10 +
+         'PowerShell=' + PSPath + #13#10 +
+         'PowerShellExists=' + BoolToStr(FileExists(PSPath), True) + #13#10 +
+         'Script=' + ScriptPath + #13#10 +
+         'ScriptExists=' + BoolToStr(FileExists(ScriptPath), True) + #13#10;
+  SaveStringToFile(LogPath, Msg, False);
+end;
+
 procedure VerifyBootstrap();
 var
   LogPath: String;
@@ -74,6 +90,7 @@ begin
   if not SoundCoreRuntimeReady() then
   begin
     LogPath := ExpandConstant('{app}\install.log');
+    SaveStringToFile(ExpandConstant('{app}\setup-bootstrap.log'), 'RuntimeReady=False' + #13#10, True);
     MsgBox(
       'Nie udalo sie przygotowac srodowiska SoundCore.' + #13#10 + #13#10 +
       'Instalator nie uruchomi aplikacji ani nie utworzy niedzialajacych skrotow.' + #13#10 +
