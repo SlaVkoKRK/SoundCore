@@ -11,17 +11,11 @@ setuptools<81
 # --- Nagrywanie i obsługa audio ---
 sounddevice>=0.4.6
 soundfile>=0.12.1
-# Uwaga: numpy i scipy CELOWO bez podanych wersji.
-# Biblioteka TTS (poniżej) narzuca bardzo konkretne wersje numpy
-# (np. numpy==1.22.0 dla Python <=3.10), więc pozwalamy pipowi
-# dobrać wersje kompatybilne z TTS zamiast je tu sztywno wymuszać.
-# UWAGA: numpy MUSI zostać dokładnie na tej wersji - TTS 0.22.0 wymaga
-# dokładnie numpy==1.22.0 (dla Python <=3.10). Inne pakiety (np. transformers)
-# przy instalacji potrafią nadpisać numpy nowszą wersją i wtedy TTS przestaje
-# działać - jeśli tak się stanie, uruchom ponownie:
-#   pip install "numpy==1.22.0" --force-reinstall
+# Stos zgodny z TTS 0.22.0 na Python 3.10.
+# TTS 0.22.0 wymaga scipy>=1.11.2, dlatego nie wolno wracać do scipy 1.10.x.
+# numpy 1.22.0 pozostaje przypięte dla zgodności z pozostałym stosem Coqui.
 numpy==1.22.0
-scipy==1.10.1
+scipy==1.11.4
 
 # --- Silnik voice cloning / TTS ---
 # Uwaga: TTS instaluje też torch jako zależność.
@@ -41,7 +35,7 @@ torchaudio<2.6
 
 transformers==4.36.2
 
-TTS>=0.22.0
+TTS==0.22.0
 
 # Tkinter jest częścią standardowej biblioteki Pythona (nie wymaga pip install),
 # ale na niektórych dystrybucjach Linuksa trzeba doinstalować pakiet systemowy:

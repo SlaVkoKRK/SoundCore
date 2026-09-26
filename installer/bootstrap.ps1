@@ -130,7 +130,7 @@ try {
     if (-not (Test-Path $requirements)) { throw "requirements.txt not found: $requirements" }
     Run -Exe $venvPython -Arguments @('-m','pip','install','-r',$requirements) -Label 'SoundCore dependencies'
 
-    Run -Exe $venvPython -Arguments @('-m','pip','install','--force-reinstall','numpy==1.22.0','scipy==1.10.1') -Label 'NumPy/SciPy compatibility fix'
+    Run -Exe $venvPython -Arguments @('-m','pip','install','--force-reinstall','numpy==1.22.0','scipy==1.11.4') -Label 'NumPy/SciPy compatibility fix'
     Run -Exe $venvPython -Arguments @('-c','import numpy, scipy, torch, webview, TTS; print("SoundCore runtime OK"); print("numpy", numpy.__version__); print("scipy", scipy.__version__); print("torch", torch.__version__); print("cuda", torch.cuda.is_available())') -Label 'Runtime verification'
 
     if (-not (Test-Path $venvPythonw)) { throw "Final validation failed: $venvPythonw does not exist." }

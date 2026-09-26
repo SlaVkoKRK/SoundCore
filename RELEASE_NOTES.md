@@ -1,6 +1,6 @@
-# SoundCore 0.4.5
+# SoundCore 0.4.6
 
-- Fixed Windows installer bootstrap argument passing.
-- Renamed the PowerShell `Run` parameter from `$Args` to `$Arguments` to avoid collision with PowerShell's automatic `$args` variable.
-- Native Python/pip commands are now invoked directly with an argument array, preserving paths and values exactly.
-- All bootstrap commands now use explicit named parameters.
+- Naprawiono konflikt zależności instalatora: TTS 0.22.0 wymaga scipy>=1.11.2.
+- Ustawiono zgodny stos Python 3.10: numpy==1.22.0, scipy==1.11.4, TTS==0.22.0.
+- Usunięto końcowe wymuszanie scipy==1.10.1, które psuło instalację.
+- TTS jest przypięte do 0.22.0, aby przyszłe wydania nie zmieniały zależności instalatora.

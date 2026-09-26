@@ -283,3 +283,8 @@ SoundCore 0.4.2+ creates `setup-bootstrap.log` before launching the environment 
 
 ## 0.4.5 installer fix
 The Windows installer bootstrap now uses collision-free PowerShell argument handling for venv, pip, PyTorch and runtime verification commands.
+
+
+## 0.4.6 installer dependency stack
+
+Windows installer uses Python 3.10 with numpy 1.22.0, scipy 1.11.4 and TTS 0.22.0.
