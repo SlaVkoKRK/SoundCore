@@ -306,6 +306,8 @@ class SongManager:
                     raise InterruptedError("Instalacja przerwana przez użytkownika.")
                 if rc != 0:
                     raise RuntimeError(f"Instalacja zależności nie powiodła się (pip exit {rc}). Zobacz log w Song Studio.")
+                self._set_install("installing", 93, "Sprawdzam zgodność py3langid…")
+                self._ensure_py3langid_compat()
                 espeak = self._espeak()
                 if not espeak["ok"]:
                     self._set_install("needs_espeak", 92, "DiffRhythm zainstalowany. Brakuje eSpeak NG dla Windows — zainstaluj eSpeak NG i uruchom SoundCore ponownie.")
@@ -421,6 +423,59 @@ class SongManager:
             data["log_tail"] = []
         return {"ok": True, **data}
 
+    def _ensure_py3langid_compat(self) -> dict:
+        """Ensure DiffRhythm gets the py3langid API expected by its bundled LangSegment."""
+        py = str(self.venv_python)
+        if not Path(py).exists():
+            return {"ok": False, "repaired": False, "message": "Brak środowiska DiffRhythm."}
+
+        probe = (
+            "from py3langid.langid import LanguageIdentifier; "
+            "assert hasattr(LanguageIdentifier, 'from_pickled_model'), 'missing from_pickled_model'"
+        )
+        result = self._run_hidden(
+            [py, "-c", probe],
+            cwd=str(self.repo_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if getattr(result, "returncode", 1) == 0:
+            return {"ok": True, "repaired": False, "message": "py3langid API OK"}
+
+        self._generation_status = {
+            "state": "repairing",
+            "progress": 8,
+            "message": "Naprawiam zgodność py3langid dla DiffRhythm…",
+        }
+        cmd = [
+            py, "-m", "pip", "install",
+            "--force-reinstall", "--no-deps",
+            "py3langid==0.2.2",
+            "--disable-pip-version-check", "--no-input",
+        ]
+        with self.log_path.open("a", encoding="utf-8", errors="replace", buffering=1) as log:
+            log.write("\n[SoundCore] Naprawa py3langid -> 0.2.2\n")
+            proc = subprocess.run(
+                cmd,
+                cwd=str(self.repo_dir),
+                stdout=log,
+                stderr=subprocess.STDOUT,
+                creationflags=self._hidden_creationflags(),
+                check=False,
+            )
+        if proc.returncode != 0:
+            raise RuntimeError("Nie udało się zainstalować zgodnego py3langid==0.2.2.")
+
+        verify = self._run_hidden(
+            [py, "-c", probe],
+            cwd=str(self.repo_dir),
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        if getattr(verify, "returncode", 1) != 0:
+            raise RuntimeError("py3langid 0.2.2 nie udostępnia wymaganego API.")
+        return {"ok": True, "repaired": True, "message": "py3langid naprawiony"}
+
     def start_generation(self, project: dict) -> dict:
         if self._process and self._process.poll() is None:
             raise RuntimeError("Render piosenki już trwa.")
@@ -429,6 +484,7 @@ class SongManager:
         espeak = self._espeak()
         if not espeak["ok"]:
             raise RuntimeError("Brakuje eSpeak NG. Zainstaluj eSpeak NG dla Windows i uruchom SoundCore ponownie.")
+        self._ensure_py3langid_compat()
         saved = self.save_project(project)["project"]
         self._cancel.clear()
         self._generation_status = {"state": "starting", "progress": 2, "message": "Przygotowanie projektu…", "project_id": saved["project_id"]}

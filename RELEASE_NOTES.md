@@ -1,3 +1,15 @@
+# SoundCore 0.7.7
+
+## DiffRhythm
+- Naprawiono `AttributeError: LanguageIdentifier has no attribute from_pickled_model`.
+- Runtime DiffRhythm automatycznie sprawdza wymagane API i w razie potrzeby instaluje `py3langid==0.2.2`.
+- Naprawa istniejącego runtime odbywa się automatycznie przed renderem, bez kasowania modeli i środowiska.
+
+## Interfejs
+- Usunięto czarne tła z logu DiffRhythm, Planu wokalu/LRC i logu treningu XTTS.
+- Panele diagnostyczne są zgodne z jasnym wyglądem SoundCore.
+- Przyciski pobierania/naprawy DiffRhythm i eSpeak NG nie są już ciemnymi przyciskami.
+
 # SoundCore 0.7.6
 
 ## Continuous recording / audio reliability
