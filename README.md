@@ -325,3 +325,19 @@ Studio Syntezy jest pełnym panelem generowania: wybór modelu (aktywny/bazowy/w
 
 ## SoundCore 0.7.1
 Hotfix kompatybilności Python 3.10: naprawa startu modułu Song Studio po 0.7.0.
+
+## Awaryjna naprawa / aktualizacja
+
+Od wersji 0.7.2 SoundCore posiada niezależny updater awaryjny. Nie uruchamia on `main.py`, `gui.app`, XTTS ani modułów muzycznych, dlatego może naprawić instalację nawet wtedy, gdy główna aplikacja nie startuje.
+
+Po instalacji dostępne są dwa skróty:
+
+- **SoundCore** — normalne uruchomienie aplikacji,
+- **SoundCore - Napraw - Aktualizuj** — sprawdzenie GitHuba, pobranie i reinstalacja najnowszego kodu.
+
+Można też uruchomić ręcznie `repair_update.cmd` z katalogu SoundCore. Dane użytkownika i pobrane modele są zachowywane. Backup kodu trafia do `_repair_backups`.
+
+
+## SoundCore 0.7.3
+
+Instalator DiffRhythm pokazuje teraz na żywo log `pip`, postęp i aktywność procesu, nie otwiera pustego okna konsoli oraz może zostać przerwany z poziomu Song Studio.

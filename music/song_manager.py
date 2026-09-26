@@ -70,6 +70,10 @@ class SongManager:
         self._generation_status = {"state": "idle", "progress": 0, "message": "Brak aktywnego renderu."}
         self._install_lock = threading.Lock()
         self._generation_lock = threading.Lock()
+        self._install_cancel = threading.Event()
+        self._install_process: Optional[subprocess.Popen] = None
+        self._install_started_at: Optional[float] = None
+        self._install_last_activity: Optional[float] = None
         self._cancel = threading.Event()
         self._process: Optional[subprocess.Popen] = None
 
@@ -111,14 +115,52 @@ class SongManager:
         }
 
     def install_status(self) -> dict:
-        return {"ok": True, **self._install_status}
+        data = {"ok": True, **self._install_status}
+        now = time.time()
+        if self._install_started_at:
+            data["elapsed_seconds"] = max(0, int(now - self._install_started_at))
+        if self._install_last_activity:
+            data["last_activity_seconds"] = max(0, int(now - self._install_last_activity))
+        if self.log_path.exists():
+            try:
+                data["log_tail"] = self.log_path.read_text(encoding="utf-8", errors="replace").splitlines()[-120:]
+            except Exception:
+                data["log_tail"] = []
+        else:
+            data["log_tail"] = []
+        data["running"] = bool(self._install_process and self._install_process.poll() is None)
+        return data
 
     def _set_install(self, state: str, progress: int, message: str) -> None:
         self._install_status = {"state": state, "progress": int(progress), "message": message}
+        self._install_last_activity = time.time()
+
+    @staticmethod
+    def _hidden_creationflags() -> int:
+        return int(getattr(subprocess, "CREATE_NO_WINDOW", 0)) if os.name == "nt" else 0
+
+    def _run_hidden(self, cmd: list[str], **kwargs):
+        kwargs.setdefault("creationflags", self._hidden_creationflags())
+        return subprocess.run(cmd, **kwargs)
+
+    def cancel_install(self) -> dict:
+        self._install_cancel.set()
+        proc = self._install_process
+        if proc and proc.poll() is None:
+            try:
+                proc.terminate()
+            except Exception:
+                pass
+        if self._install_status.get("state") in {"starting", "downloading", "installing"}:
+            self._set_install("cancelling", self._install_status.get("progress", 0), "Przerywanie instalacji DiffRhythm…")
+        return self.install_status()
 
     def install_engine(self) -> dict:
         if self._install_status.get("state") in {"starting", "downloading", "installing"}:
             return self.install_status()
+        self._install_cancel.clear()
+        self._install_started_at = time.time()
+        self._install_last_activity = self._install_started_at
         threading.Thread(target=self._install_worker, name="SoundCoreDiffRhythmInstall", daemon=True).start()
         self._set_install("starting", 2, "Przygotowanie DiffRhythm…")
         return self.install_status()
@@ -142,23 +184,70 @@ class SongManager:
                     archive.unlink(missing_ok=True)
                 if not self.venv_python.exists():
                     self._set_install("installing", 28, "Tworzenie izolowanego środowiska Python…")
-                    subprocess.run([sys.executable, "-m", "venv", str(self.runtime_dir / "venv")], check=True)
+                    self._run_hidden([sys.executable, "-m", "venv", str(self.runtime_dir / "venv")], check=True)
+                if self._install_cancel.is_set():
+                    raise InterruptedError("Instalacja przerwana przez użytkownika.")
                 py = str(self.venv_python)
                 self._set_install("installing", 40, "Aktualizacja pip…")
-                subprocess.run([py, "-m", "pip", "install", "--upgrade", "pip", "wheel", "setuptools"], check=True)
-                self._set_install("installing", 52, "Instalacja zależności DiffRhythm… To może potrwać.")
+                self._run_hidden([py, "-m", "pip", "install", "--upgrade", "pip", "wheel", "setuptools", "--disable-pip-version-check", "--no-input"], check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                if self._install_cancel.is_set():
+                    raise InterruptedError("Instalacja przerwana przez użytkownika.")
+                self._set_install("installing", 52, "Instalacja zależności DiffRhythm — uruchamiam pip…")
                 req = self.repo_dir / "requirements.txt"
-                with self.log_path.open("w", encoding="utf-8", errors="replace") as log:
-                    p = subprocess.run([py, "-m", "pip", "install", "-r", str(req)], cwd=str(self.repo_dir), stdout=log, stderr=subprocess.STDOUT)
-                if p.returncode != 0:
-                    raise RuntimeError(f"Instalacja zależności nie powiodła się. Zobacz {self.log_path}")
+                env = os.environ.copy()
+                env["PYTHONUNBUFFERED"] = "1"
+                cmd = [py, "-m", "pip", "install", "-r", str(req), "--disable-pip-version-check", "--no-input", "--progress-bar", "off"]
+                progress = 52
+                with self.log_path.open("w", encoding="utf-8", errors="replace", buffering=1) as log:
+                    log.write("SoundCore DiffRhythm installer\n")
+                    log.write("COMMAND: " + " ".join(cmd) + "\n\n")
+                    self._install_process = subprocess.Popen(
+                        cmd, cwd=str(self.repo_dir), stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                        text=True, encoding="utf-8", errors="replace", bufsize=1, env=env,
+                        creationflags=self._hidden_creationflags(),
+                    )
+                    assert self._install_process.stdout is not None
+                    for raw in self._install_process.stdout:
+                        line = raw.rstrip("\r\n")
+                        log.write(line + "\n")
+                        log.flush()
+                        self._install_last_activity = time.time()
+                        low = line.lower()
+                        if line.startswith("Collecting ") or line.startswith("Using cached ") or line.startswith("Downloading "):
+                            progress = min(80, progress + 1)
+                        elif "installing collected packages" in low:
+                            progress = max(progress, 84)
+                        elif "successfully installed" in low:
+                            progress = 91
+                        elif "building wheel" in low or "preparing metadata" in low:
+                            progress = min(82, max(progress, 68))
+                        tail = line if line else "pip pracuje…"
+                        if len(tail) > 160:
+                            tail = tail[:157] + "…"
+                        self._install_status = {"state": "installing", "progress": progress, "message": tail}
+                        if self._install_cancel.is_set():
+                            try:
+                                self._install_process.terminate()
+                            except Exception:
+                                pass
+                            break
+                    rc = self._install_process.wait()
+                    self._install_process = None
+                if self._install_cancel.is_set():
+                    raise InterruptedError("Instalacja przerwana przez użytkownika.")
+                if rc != 0:
+                    raise RuntimeError(f"Instalacja zależności nie powiodła się (pip exit {rc}). Zobacz log w Song Studio.")
                 espeak = self._espeak()
                 if not espeak["ok"]:
                     self._set_install("needs_espeak", 92, "DiffRhythm zainstalowany. Brakuje eSpeak NG dla Windows — zainstaluj eSpeak NG i uruchom SoundCore ponownie.")
                 else:
                     self._set_install("completed", 100, "DiffRhythm gotowy. Modele pobiorą się przy pierwszym renderze.")
+            except InterruptedError as exc:
+                self._install_process = None
+                self._set_install("cancelled", self._install_status.get("progress", 0), str(exc))
             except Exception as exc:
-                self._set_install("error", 0, str(exc))
+                self._install_process = None
+                self._set_install("error", self._install_status.get("progress", 0), str(exc))
 
     def _project_path(self, project_id: str) -> Path:
         return self.projects_dir / project_id / "project.json"

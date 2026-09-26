@@ -855,6 +855,9 @@ class SoundCoreApi:
     def music_engine_install_status(self) -> dict:
         return self._songs.install_status()
 
+    def cancel_music_engine_install(self) -> dict:
+        return self._songs.cancel_install()
+
     def select_song_audio_file(self) -> dict:
         win = webview.active_window()
         if win is None:
@@ -982,6 +985,7 @@ def run() -> None:
         api.music_engine_status,
         api.install_music_engine,
         api.music_engine_install_status,
+        api.cancel_music_engine_install,
         api.select_song_audio_file,
         api.start_song_generation,
         api.song_generation_status,

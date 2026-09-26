@@ -23,6 +23,17 @@ jobs:
           "version=$v" >> $env:GITHUB_OUTPUT
           Write-Host "Building SoundCore $v"
 
+      - name: Setup Python 3.10 validation runtime
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Validate Python 3.10 syntax
+        shell: pwsh
+        run: |
+          python -m compileall -q .
+          if ($LASTEXITCODE -ne 0) { throw 'Python 3.10 syntax validation failed.' }
+
       - name: Install Inno Setup
         shell: pwsh
         run: choco install innosetup -y --no-progress
@@ -40,6 +51,9 @@ jobs:
           if ($bootstrap.Contains("-Arguments @('-c'")) { throw 'bootstrap.ps1 must not use python -c for runtime verification.' }
           if (-not $bootstrap.Contains('soundcore_verify_')) { throw 'bootstrap.ps1 is missing file-based runtime verification.' }
           if (-not (Test-Path 'installer\SoundCore.iss')) { throw 'installer\SoundCore.iss not found.' }
+          if (-not (Test-Path 'repair_update.ps1')) { throw 'repair_update.ps1 not found.' }
+          $repair = Get-Content repair_update.ps1 -Raw
+          if (-not $repair.Contains('soundcore_update.zip')) { throw 'repair updater does not reference soundcore_update.zip.' }
           Write-Host "Installer sources validated for $v"
 
       - name: Build installer

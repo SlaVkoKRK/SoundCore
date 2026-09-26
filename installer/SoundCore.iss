@@ -43,12 +43,14 @@ Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "desktopicon"; Description: "Utworz skrot na pulpicie"; GroupDescription: "Skroty:"; Flags: checkedonce
 
 [Files]
-Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".git\*;.github\*;installer\*;venv\*;.venv\*;voice_profiles\*;output\*;cache\*;__pycache__\*;*.pyc"
+Source: "..\*"; DestDir: "{app}"; Flags: ignoreversion recursesubdirs createallsubdirs; Excludes: ".git\*;.github\*;installer\*;venv\*;.venv\*;voice_profiles\*;output\*;songs\*;engine_runtime\*;_repair_backups\*;cache\*;__pycache__\*;*.pyc"
 Source: "bootstrap.ps1"; DestDir: "{app}\installer"; Flags: ignoreversion
 
 [Icons]
 Name: "{autoprograms}\SoundCore"; Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"; Check: SoundCoreRuntimeReady
 Name: "{autodesktop}\SoundCore"; Filename: "{app}\{#MyAppExe}"; Parameters: """{app}\main.py"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"; Tasks: desktopicon; Check: SoundCoreRuntimeReady
+Name: "{autoprograms}\SoundCore - Napraw - Aktualizuj"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\repair_update.ps1"" -AppDir ""{app}"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"
+Name: "{autodesktop}\SoundCore - Napraw - Aktualizuj"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\repair_update.ps1"" -AppDir ""{app}"""; WorkingDir: "{app}"; IconFilename: "{app}\gui\assets\soundcore.ico"; Tasks: desktopicon
 
 [Run]
 Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -NonInteractive -ExecutionPolicy Bypass -File ""{app}\installer\bootstrap.ps1"" -AppDir ""{app}"""; StatusMsg: "Przygotowywanie srodowiska SoundCore. Pierwsza instalacja moze potrwac kilka minut..."; Flags: waituntilterminated runhidden; BeforeInstall: PrepareBootstrapLog; AfterInstall: VerifyBootstrap
