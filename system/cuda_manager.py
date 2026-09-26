@@ -43,6 +43,20 @@ class CudaRepairManager:
         data["log_path"] = str(self.log_path)
         return data
 
+
+    def reconcile(self, torch_cuda_available: bool) -> dict:
+        """Clear stale restart/install state once CUDA is verifiably active."""
+        data = self.status()
+        if torch_cuda_available and data.get("state") in {"starting", "installing", "completed", "error", "unknown"}:
+            data = {
+                "state": "verified",
+                "progress": 100,
+                "message": "PyTorch CUDA jest aktywna i gotowa do użycia.",
+                "restart_required": False,
+            }
+            self._write_status(data)
+        return data
+
     def start(self) -> dict:
         if self.process and self.process.poll() is None:
             return self.status()
@@ -89,10 +103,14 @@ try:
     log_path.write_text("SoundCore CUDA repair\\n",encoding="utf-8")
     run([sys.executable,"-m","pip","install","--upgrade","pip"],"Aktualizacja pip…",10)
     run([
-        sys.executable,"-m","pip","install","--upgrade","--force-reinstall",
+        sys.executable,"-m","pip","install","--upgrade","--force-reinstall","--no-deps",
         "torch=={TORCH_VERSION}","torchvision=={TORCHVISION_VERSION}","torchaudio=={TORCHAUDIO_VERSION}",
         "--index-url","{CUDA_INDEX}"
     ],"Pobieranie i instalacja PyTorch {TORCH_VERSION} + CUDA 12.4…",35)
+    run([
+        sys.executable,"-m","pip","install","--force-reinstall","--no-deps",
+        "numpy==1.22.0","scipy==1.10.1"
+    ],"Przywracanie zgodnych wersji NumPy i SciPy…",82)
     write("completed",100,"PyTorch CUDA zainstalowany. Uruchom ponownie SoundCore, aby aktywować GPU.",restart_required=True)
 except Exception as exc:
     with log_path.open("a",encoding="utf-8") as log:

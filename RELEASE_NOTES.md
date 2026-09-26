@@ -1,10 +1,13 @@
-# SoundCore 0.3.3
+# SoundCore 0.3.4
 
-Hotfix mostu WebUI / CUDA / logo.
+Windows/UI quality hotfix.
 
-- całkowicie usunięto przekazywanie obiektu `js_api` do pywebview
-- JavaScript otrzymuje wyłącznie jawną białą listę metod przez `window.expose(...)`
-- brak jakiejkolwiek referencji z API do `window.native`, WinForms i WebView2 COM
-- poprawiono wywołanie `Napraw CUDA` i status instalacji PyTorch CUDA
-- logo SoundCore jest osadzone bezpośrednio w HTML jako data URI, więc nie zależy od lokalnych ścieżek assetów
-- zachowano trening XTTS/GPTTrainer, powiadomienia, profile i aktualizacje GitHub
+- SoundCore starts maximized using the native pywebview `maximized` mode.
+- System title bar is styled to match the light SoundCore theme on supported Windows builds.
+- Added a native SoundCore `.ico` for the title bar, Alt-Tab and taskbar identity.
+- SoundCore automatically creates/refreshes a desktop shortcut that starts the app through `pythonw.exe` from the active venv.
+- Training stop controls are shown only while a training job is actually running; start/stop buttons now track the real training state.
+- CUDA repair state is reconciled with the actual PyTorch CUDA state. If CUDA is active, the stale “restart SoundCore” prompt disappears automatically.
+- CUDA repair no longer lets pip upgrade NumPy/SciPy unexpectedly. PyTorch CUDA wheels are installed with `--no-deps`, then SoundCore restores `numpy==1.22.0` and `scipy==1.10.1`.
+- Normal WebView2 diagnostic logging is reduced to avoid noisy Chromium console messages during shutdown.
+- Requirements now explicitly pin SciPy 1.10.1 for the current NumPy/TTS stack.

@@ -9,6 +9,10 @@ import threading
 from datetime import datetime
 from pathlib import Path
 
+# Keep WebView2 diagnostics quiet in normal SoundCore operation.
+# The app still surfaces its own actionable errors in the notification center.
+os.environ.setdefault("WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS", "--log-level=3 --disable-logging")
+
 import webview
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -18,6 +22,7 @@ from recorder.recorder import DEFAULT_SAMPLERATE, list_input_devices, play_wav, 
 from storage.profile_manager import ProfileManager
 from system.hardware import detect_hardware
 from system.cuda_manager import CudaRepairManager
+from system.windows_integration import prepare_windows_process, setup_windows_shell_async
 from training.dataset import add_sample, get_stats
 from training.manager import TrainingManager
 from updater.update_manager import check_for_update, download_update, launch_apply
@@ -27,6 +32,7 @@ from voice_engine.tts_engine import get_engine
 BASE_DIR = Path(__file__).resolve().parents[1]
 WEBUI_DIR = BASE_DIR / "webui"
 OUTPUT_DIR = BASE_DIR / "output"
+APP_ICON = BASE_DIR / "gui" / "assets" / "soundcore.ico"
 APP_VERSION = (BASE_DIR / "VERSION").read_text(encoding="utf-8").strip() if (BASE_DIR / "VERSION").exists() else "0.3.3"
 CHANNEL_URL = "https://raw.githubusercontent.com/SlaVkoKRK/SoundCore/main/dist/channel.json"
 OUTPUT_DIR.mkdir(exist_ok=True)
@@ -40,6 +46,7 @@ class SoundCoreApi:
         self._training = TrainingManager(str(BASE_DIR))
         self._cuda_repair = CudaRepairManager(BASE_DIR / "training_runtime")
         self._hardware = detect_hardware()
+        self._cuda_repair.reconcile(self._hardware.torch_cuda_available)
         self._notifications: list[dict] = []
         self._last_generated: str | None = None
         self._update_cache: dict | None = None
@@ -76,6 +83,7 @@ class SoundCoreApi:
 
     def refresh_hardware(self) -> dict:
         self._hardware = detect_hardware()
+        self._cuda_repair.reconcile(self._hardware.torch_cuda_available)
         self._notify("Ponowne wykrywanie GPU", self._hardware.note, "success" if self._hardware.torch_cuda_available else "warning")
         return self._hardware.to_dict()
 
@@ -173,7 +181,12 @@ class SoundCoreApi:
 
 
     def cuda_repair_status(self) -> dict:
-        return self._cuda_repair.status()
+        self._hardware = detect_hardware()
+        self._cuda_repair.reconcile(self._hardware.torch_cuda_available)
+        data = self._cuda_repair.status()
+        data["torch_cuda_available"] = bool(self._hardware.torch_cuda_available)
+        data["torch_cuda_version"] = self._hardware.torch_cuda_version
+        return data
 
     def install_cuda_runtime(self) -> dict:
         self._hardware = detect_hardware()
@@ -238,6 +251,7 @@ class SoundCoreApi:
 
 
 def run() -> None:
+    prepare_windows_process()
     api = SoundCoreApi()
     window = webview.create_window(
         "SoundCore",
@@ -246,6 +260,7 @@ def run() -> None:
         height=930,
         min_size=(1180, 720),
         background_color="#F6F8FC",
+        maximized=True,
     )
     # Do not pass a Python object as js_api. pywebview reflects object attributes
     # and on Windows this can walk into native WinForms/WebView2 COM objects.
@@ -271,6 +286,7 @@ def run() -> None:
         api.check_updates,
         api.install_update,
     )
+    setup_windows_shell_async(BASE_DIR, APP_ICON)
     webview.start(debug=False)
 
 

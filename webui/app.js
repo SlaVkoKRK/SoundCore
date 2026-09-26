@@ -18,13 +18,45 @@ function renderNotifications(){const rows=state.notifications||[];const unread=r
 function renderProfiles(){const ps=state.profiles||[];const options=ps.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('');['dashProfile','synthProfile','trainProfile'].forEach(id=>$(id).innerHTML=options||'<option value="">Brak profili</option>');if(ps.length){$('summaryProfile').textContent=ps[0].name;$('summaryProfileSub').textContent=`${ps[0].duration_seconds}s · ${ps[0].dataset.samples} próbek datasetu`}else{$('summaryProfile').textContent='Brak profilu';$('summaryProfileSub').textContent='Dodaj profil, aby zacząć'}$('profileCards').innerHTML=ps.length?ps.slice(0,3).map(p=>`<div class="profile-card"><div class="profile-avatar">${esc((p.name[0]||'V').toUpperCase())}</div><div><b>${esc(p.name)}</b><small>${p.dataset.samples} próbek · ${p.dataset.duration_minutes} min · ${p.has_rvc_model?'XTTS + RVC':'XTTS v2'}</small></div></div>`).join(''):'<div class="status-box">Brak profili. Dodaj pierwszy głos.</div>';$('profilesTable').innerHTML=ps.length?ps.map(p=>`<div class="profile-row"><div class="profile-avatar">${esc((p.name[0]||'V').toUpperCase())}</div><div><b>${esc(p.name)}</b><small>Referencja ${p.duration_seconds}s · dataset ${p.dataset.samples} próbek / ${p.dataset.duration_minutes} min</small></div><div class="profile-row-actions"><button onclick="playProfile('${encodeURIComponent(p.name)}')">▶ Odsłuchaj</button><button onclick="deleteProfile('${encodeURIComponent(p.name)}')">🗑 Usuń</button></div></div>`).join(''):'<div class="status-box">Nie masz jeszcze profili głosowych.</div>';updateDatasetStats()}
 function renderDevices(){const o=(state.devices||[]).map(d=>`<option value="${d.index}">${esc(d.name)}</option>`).join('');['profileDevice','trainDevice'].forEach(id=>$(id).innerHTML=o||'<option value="">Brak mikrofonu</option>')}
 function renderHardware(){const h=state.hardware||{};$('summaryGpu').textContent=h.gpu_detected?h.gpu_name:(h.cpu||'CPU');$('summaryGpuSub').textContent=h.gpu_detected?`${h.gpu_memory_mb?Math.round(h.gpu_memory_mb/1024)+' GB VRAM · ':''}${h.torch_cuda_available?'CUDA aktywna':'PyTorch CPU-only'}`:'Tryb CPU';$('gpuPill').textContent=h.torch_cuda_available?'GPU':'CPU';$('gpuPill').className=`status-pill ${h.torch_cuda_available?'green':'neutral'}`;$('trainGpuName').textContent=h.gpu_detected?h.gpu_name:'Brak NVIDIA GPU';$('trainGpuNote').textContent=h.note||'';$('cudaState').textContent=h.torch_cuda_available?'Aktywna':'Nieaktywna';$('cudaVersion').textContent=h.torch_cuda_available?`CUDA ${h.torch_cuda_version||''}`:(h.gpu_detected?'Wymaga instalacji builda CUDA':'Brak kompatybilnego GPU');$('settingsGpu').textContent=h.gpu_detected?h.gpu_name:'Brak NVIDIA GPU';$('settingsGpuExtra').textContent=h.gpu_memory_mb?`${Math.round(h.gpu_memory_mb/1024)} GB VRAM · sterownik ${h.nvidia_driver||'—'}`:(h.note||'');$('settingsCuda').textContent=h.torch_cuda_available?`Aktywna ${h.torch_cuda_version||''}`:'Nieaktywna';$('dashTrainDevice').textContent=h.torch_cuda_available?'GPU':'CPU';$('trainerDeviceBadge').textContent=h.torch_cuda_available?'CUDA':'CPU';const needs=!!h.gpu_detected&&!h.torch_cuda_available;$('cudaBanner').classList.toggle('hidden',!needs);$('cudaRepairBox').classList.toggle('hidden',!needs);if(needs)$('cudaBannerText').textContent=`${h.gpu_name} jest widoczny. Zainstalujemy PyTorch 2.5.1 z runtime CUDA 12.4.`}
-function renderTraining(t){t=t||{};const p=Math.max(0,Math.min(100,Number(t.progress||0)));['trainProgressBar','dashTrainProgress'].forEach(id=>$(id).style.width=`${p}%`);$('trainStatePercent').textContent=`${p}%`;$('dashTrainPercent').textContent=`${p}%`;const label={idle:'Gotowy',starting:'Uruchamianie',preparing:'Przygotowanie',downloading:'Pobieranie XTTS',training:'Trening w toku',completed:'Trening zakończony',error:'Błąd treningu',stopped:'Zatrzymany'}[t.state]||t.state||'Gotowy';$('trainStateTitle').textContent=label;$('dashTrainTitle').textContent=label;$('trainStateMessage').textContent=t.message||'Czekam na uruchomienie zadania.';$('dashTrainMessage').textContent=t.message||'Dodaj próbki, a następnie uruchom GPTTrainer.';$('dashTrainEpoch').textContent=t.device?`Urządzenie: ${String(t.device).toUpperCase()}`:'Brak aktywnego zadania';$('dashTrainLoss').textContent=t.loss!=null?`Loss ${Number(t.loss).toFixed(4)}`:'Loss —'}
-function renderCudaRepair(r){r=r||{};const active=['starting','installing','completed','error'].includes(r.state);$('cudaRepairProgress').classList.toggle('hidden',!active);if(!active)return;const p=Number(r.progress||0);$('cudaRepairBar').style.width=`${p}%`;$('cudaRepairPercent').textContent=`${p}%`;$('cudaRepairTitle').textContent=r.state==='completed'?'CUDA gotowa':r.state==='error'?'Błąd instalacji':'Instalacja PyTorch CUDA';$('cudaRepairMessage').textContent=r.message||'';$('restartAfterCuda').classList.toggle('hidden',!r.restart_required)}
+function renderTraining(t){
+  t=t||{};
+  const p=Math.max(0,Math.min(100,Number(t.progress||0)));
+  ['trainProgressBar','dashTrainProgress'].forEach(id=>$(id).style.width=`${p}%`);
+  $('trainStatePercent').textContent=`${p}%`; $('dashTrainPercent').textContent=`${p}%`;
+  const current=t.state||'idle';
+  const active=['starting','preparing','downloading','training'].includes(current) || t.running===true;
+  const label={idle:'Gotowy',starting:'Uruchamianie',preparing:'Przygotowanie',downloading:'Pobieranie XTTS',training:'Trening w toku',completed:'Trening zakończony',error:'Błąd treningu',stopped:'Zatrzymany'}[current]||current;
+  $('trainStateTitle').textContent=label; $('dashTrainTitle').textContent=label;
+  $('trainStateMessage').textContent=t.message||'Czekam na uruchomienie zadania.';
+  $('dashTrainMessage').textContent=t.message||'Dodaj próbki, a następnie uruchom GPTTrainer.';
+  $('dashTrainEpoch').textContent=t.device?`Urządzenie: ${String(t.device).toUpperCase()}`:'Brak aktywnego zadania';
+  $('dashTrainLoss').textContent=t.loss!=null?`Loss ${Number(t.loss).toFixed(4)}`:'Loss —';
+  $('startTraining').disabled=active;
+  $('stopTraining').classList.toggle('hidden',!active); $('stopTraining').disabled=!active;
+  $('dashStopTraining').classList.toggle('hidden',!active); $('dashStopTraining').disabled=!active;
+}
+function renderCudaRepair(r){
+  r=r||{};
+  const cudaReady=!!state.hardware?.torch_cuda_available || !!r.torch_cuda_available || r.state==='verified';
+  if(cudaReady){
+    $('cudaRepairBox').classList.add('hidden');
+    $('cudaRepairProgress').classList.add('hidden');
+    $('restartAfterCuda').classList.add('hidden');
+    return;
+  }
+  const active=['starting','installing','completed','error'].includes(r.state);
+  $('cudaRepairProgress').classList.toggle('hidden',!active);
+  if(!active){$('restartAfterCuda').classList.add('hidden');return;}
+  const p=Number(r.progress||0); $('cudaRepairBar').style.width=`${p}%`; $('cudaRepairPercent').textContent=`${p}%`;
+  $('cudaRepairTitle').textContent=r.state==='completed'?'CUDA zainstalowana':r.state==='error'?'Błąd instalacji':'Instalacja PyTorch CUDA';
+  $('cudaRepairMessage').textContent=r.message||'';
+  $('restartAfterCuda').classList.toggle('hidden',!(r.restart_required && !cudaReady));
+}
 function updateDatasetStats(){const p=(state.profiles||[]).find(x=>x.name===$('trainProfile').value)||(state.profiles||[])[0];$('trainSampleCount').textContent=p?.dataset.samples||0;$('trainDuration').textContent=`${p?.dataset.duration_minutes||0} min`;$('dashTrainDataset').textContent=`${p?.dataset.duration_minutes||0} min`}
 function renderState(){const u=state.user||{};$('userName').textContent=u.name||'Użytkownik';$('userRole').textContent=u.role||'Lokalny profil';$('userAvatar').textContent=(u.name||'U')[0].toUpperCase();$('settingsUser').textContent=u.name||'—';$('settingsVersion').textContent=state.version;$('sidebarVersion').textContent=`v${state.version}`;$('currentVersion').textContent=`v${state.version}`;$('updatesCurrent').textContent=`v${state.version}`;renderHardware();renderDevices();renderProfiles();renderNotifications();renderTraining(state.training);renderCudaRepair(state.cuda_repair)}
 async function refreshState(){try{state=await api('get_state');renderState()}catch(e){toast('Błąd uruchomienia',e.message,'error')}}
 async function refreshTraining(){try{renderTraining(await api('training_status'))}catch(e){}}
-async function refreshCuda(){try{const r=await api('cuda_repair_status');state.cuda_repair=r;renderCudaRepair(r);if(r.state==='completed'||r.state==='error')clearInterval(cudaTimer)}catch(e){}}
+async function refreshCuda(){try{const r=await api('cuda_repair_status');state.cuda_repair=r;if(r.torch_cuda_available){state.hardware=await api('refresh_hardware');renderHardware()}renderCudaRepair(r);if(['completed','verified','error'].includes(r.state)){clearInterval(cudaTimer);cudaTimer=null}}catch(e){}}
 window.playProfile=async encoded=>{try{await api('play_profile',decodeURIComponent(encoded))}catch(e){toast('Odtwarzanie',e.message,'error')}};
 window.deleteProfile=async encoded=>{const n=decodeURIComponent(encoded);if(!confirm(`Usunąć profil '${n}'?`))return;try{const r=await api('delete_profile',n);state.profiles=r.profiles;renderProfiles();toast('Profil usunięty',n,'success')}catch(e){toast('Błąd',e.message,'error')}};
 async function startCudaRepair(){if(!confirm('SoundCore zainstaluje w aktywnym środowisku Python oficjalny PyTorch 2.5.1 + CUDA 12.4. Pobieranie może być duże. Kontynuować?'))return;try{state.cuda_repair=await api('install_cuda_runtime');renderCudaRepair(state.cuda_repair);toast('CUDA','Rozpoczęto instalację PyTorch CUDA.','info');clearInterval(cudaTimer);cudaTimer=setInterval(refreshCuda,1500)}catch(e){toast('CUDA',e.message,'error')}}

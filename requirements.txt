@@ -21,7 +21,7 @@ soundfile>=0.12.1
 # działać - jeśli tak się stanie, uruchom ponownie:
 #   pip install "numpy==1.22.0" --force-reinstall
 numpy==1.22.0
-scipy
+scipy==1.10.1
 
 # --- Silnik voice cloning / TTS ---
 # Uwaga: TTS instaluje też torch jako zależność.
