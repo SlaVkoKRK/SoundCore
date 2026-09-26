@@ -50,3 +50,6 @@ TTS>=0.22.0
 
 # --- Nowoczesny lokalny WebUI ---
 pywebview>=5.0,<7
+
+# Import audio/video and trimming editor
+imageio-ffmpeg>=0.5.1,<0.7

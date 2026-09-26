@@ -164,3 +164,55 @@ function wire(){
 const synth=async dash=>{const text=dash?$('dashText').value:$('synthText').value,profile=dash?$('dashProfile').value:$('synthProfile').value,lang=dash?$('dashLanguage').value:$('synthLanguage').value,rvc=dash?false:$('synthRvc').checked,btn=dash?$('dashGenerate'):$('synthGenerate');try{btn.disabled=true;const old=btn.textContent;btn.dataset.old=old;btn.textContent='Generowanie…';const r=await api('synthesize',text,profile,lang,rvc);$('playerStatus').textContent=r.name;$('synthResult').textContent=`Gotowe: ${r.path}`;toast('Synteza gotowa',r.name,'success');await refreshState()}catch(e){toast('Synteza',e.message,'error');$('synthResult').textContent=e.message}finally{btn.disabled=false;btn.textContent=btn.dataset.old||'Generuj'}};$('dashGenerate').onclick=()=>synth(true);$('synthGenerate').onclick=()=>synth(false);['dashPlay','playerPlay','synthPlay'].forEach(id=>$(id).onclick=async()=>{try{await api('play_last_generated')}catch(e){toast('Odtwarzanie',e.message,'error')}});$('refreshGpu').onclick=async()=>{try{state.hardware=await api('refresh_hardware');renderHardware();toast('GPU',state.hardware.note,state.hardware.torch_cuda_available?'success':'info')}catch(e){toast('GPU',e.message,'error')}};$('cudaInstallQuick').onclick=$('installCudaBtn').onclick=startCudaRepair;$('restartAfterCuda').onclick=async()=>{await api('restart_app')};$('startTraining').onclick=async()=>{try{renderTraining(await api('start_training',$('trainProfile').value,'pl',Number($('trainEpochs').value),$('trainCompute').value,Number($('trainBatch').value)));toast('Trening','Uruchomiono GPTTrainer','success')}catch(e){toast('Trening',e.message,'error')}};$('stopTraining').onclick=$('dashStopTraining').onclick=async()=>{try{renderTraining(await api('stop_training'));toast('Trening','Zatrzymano trening','info')}catch(e){toast('Trening',e.message,'error')}};
 const check=async()=>{try{$('checkUpdates').disabled=true;$('updateStatus').textContent='Sprawdzanie kanału GitHub…';updateInfo=await api('check_updates');if(!updateInfo.ok)throw new Error(updateInfo.error);$('latestVersion').textContent=`v${updateInfo.latest_version}`;$('updatesLatest').textContent=`v${updateInfo.latest_version}`;$('latestState').textContent=updateInfo.update_available?'Dostępna aktualizacja':'Masz najnowszą wersję';$('installUpdate').disabled=!updateInfo.update_available;$('updateStatus').textContent=updateInfo.update_available?`Dostępna wersja ${updateInfo.latest_version}.`:'Masz najnowszą wersję SoundCore.';state.notifications=await api('notifications_state');renderNotifications()}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacje',e.message,'error')}finally{$('checkUpdates').disabled=false}};$('checkUpdates').onclick=$('dashCheckUpdates').onclick=check;$('installUpdate').onclick=async()=>{if(!confirm('Pobrać i zainstalować aktualizację z GitHuba?'))return;try{$('installUpdate').disabled=true;$('updateStatus').textContent='Pobieranie i weryfikacja SHA256…';const r=await api('install_update');if(r.restarting)$('updateStatus').textContent='Aktualizacja gotowa. Restart…'}catch(e){$('updateStatus').textContent=e.message;toast('Aktualizacja',e.message,'error');$('installUpdate').disabled=false}}}
 window.addEventListener('pywebviewready',async()=>{wire();await refreshState();await hydrateUserMenu();await Promise.all([loadPrompt('profileReadingText','profilePromptMeta',$('profileDuration').value,'profile'),loadPrompt('trainingSentence','trainingPromptMeta',$('trainingDuration').value,'training',$('trainProfile').value),loadPrompt('trainProfileReadingText','trainProfilePromptMeta',$('trainProfileDuration').value,'profile')]);trainingTimer=setInterval(refreshTraining,1800);if(['starting','installing'].includes(state.cuda_repair?.state))cudaTimer=setInterval(refreshCuda,1500)});
+
+// SoundCore 0.3.8 - recording library + audio/video trim editor
+let mediaSession=null;
+const _renderProfiles038=renderProfiles;
+renderProfiles=function(){
+  _renderProfiles038();
+  syncRecordingProfileOptions();
+};
+function syncRecordingProfileOptions(){
+  const sel=$('recordingsProfile'); if(!sel)return;
+  const current=sel.value;
+  const ps=state.profiles||[];
+  sel.innerHTML=ps.map(p=>`<option value="${esc(p.name)}">${esc(p.name)}</option>`).join('')||'<option value="">Brak profili</option>';
+  if(current && ps.some(p=>p.name===current))sel.value=current;
+  else if(ps.length)sel.value=ps[0].name;
+}
+async function loadRecordings(){
+  const profile=$('recordingsProfile')?.value;
+  if(!profile){$('recordingsList').innerHTML='<div class="status-box">Najpierw utwórz profil głosu.</div>';return}
+  try{
+    const r=await api('list_profile_recordings',profile);
+    const rows=r.recordings||[];
+    $('recordingsStats').textContent=`${rows.length} nagrań · dataset ${r.stats.samples} próbek · ${r.stats.duration_minutes} min`;
+    $('recordingsList').innerHTML=rows.length?rows.map(x=>`<div class="recording-row"><div class="recording-type">${x.kind==='reference'?'R':'A'}</div><div><b>${esc(x.kind==='reference'?'Referencja profilu':x.id)}</b><small>${Number(x.duration_seconds||0).toFixed(2)} s · ${esc(x.source_name||'SoundCore')}</small></div><div class="recording-transcript" title="${esc(x.text||'')}">${esc(x.text||'Brak transkrypcji')}</div><div class="recording-row-actions"><button data-rec-play="${esc(x.id)}">▶</button>${x.deletable?`<button data-rec-edit="${esc(x.id)}">✎</button><button class="danger" data-rec-del="${esc(x.id)}">🗑</button>`:''}</div></div>`).join(''):'<div class="status-box">Brak nagrań dla profilu.</div>';
+    $('recordingsList').querySelectorAll('[data-rec-play]').forEach(b=>b.onclick=async()=>{try{await api('play_profile_recording',profile,b.dataset.recPlay)}catch(e){toast('Odtwarzanie',e.message,'error')}});
+    $('recordingsList').querySelectorAll('[data-rec-edit]').forEach(b=>b.onclick=async()=>{const row=b.closest('.recording-row');const current=row?.querySelector('.recording-transcript')?.textContent||'';const text=prompt('Wpisz dokładną transkrypcję próbki:',current==='Brak transkrypcji'?'':current);if(text===null)return;try{await api('update_profile_recording_text',profile,b.dataset.recEdit,text);await loadRecordings();toast('Transkrypcja','Zapisano tekst próbki.','success')}catch(e){toast('Transkrypcja',e.message,'error')}});
+    $('recordingsList').querySelectorAll('[data-rec-del]').forEach(b=>b.onclick=async()=>{if(!confirm(`Usunąć próbkę ${b.dataset.recDel}?`))return;try{await api('delete_profile_recording',profile,b.dataset.recDel);await loadRecordings();await refreshState();toast('Próbka','Usunięto nagranie','success')}catch(e){toast('Usuwanie',e.message,'error')}});
+  }catch(e){$('recordingsList').innerHTML=`<div class="status-box">${esc(e.message)}</div>`}
+}
+function drawMediaWave(peaks){
+  const c=$('mediaWaveCanvas'); if(!c)return; const ctx=c.getContext('2d');
+  const dpr=window.devicePixelRatio||1; const rect=c.getBoundingClientRect(); c.width=Math.max(600,Math.floor(rect.width*dpr)); c.height=Math.floor(rect.height*dpr); ctx.scale(dpr,dpr);
+  const w=rect.width,h=rect.height,mid=h/2; ctx.clearRect(0,0,w,h);
+  ctx.fillStyle='#f8faff';ctx.fillRect(0,0,w,h);ctx.strokeStyle='#e7edf7';ctx.lineWidth=1;for(let i=1;i<6;i++){const y=h*i/6;ctx.beginPath();ctx.moveTo(0,y);ctx.lineTo(w,y);ctx.stroke()}
+  const vals=peaks||[]; if(!vals.length)return; const gap=w/vals.length; ctx.strokeStyle='#5679ff';ctx.lineWidth=Math.max(1,Math.min(3,gap*.55));
+  vals.forEach((v,i)=>{const x=i*gap+gap/2,amp=Math.max(1,v*(h*.42));ctx.beginPath();ctx.moveTo(x,mid-amp);ctx.lineTo(x,mid+amp);ctx.stroke()});
+}
+function updateMediaSelection(){
+  if(!mediaSession)return; const dur=Number(mediaSession.duration_seconds||0); let a=Number($('mediaStartRange').value),b=Number($('mediaEndRange').value); if(a>b-.05){if(document.activeElement===$('mediaStartRange'))a=Math.max(0,b-.05);else b=Math.min(dur,a+.05)} $('mediaStartRange').value=a;$('mediaEndRange').value=b;
+  $('mediaStartLabel').textContent=`${a.toFixed(2)} s`; $('mediaEndLabel').textContent=`${b.toFixed(2)} s`; $('mediaClipLength').textContent=`${Math.max(0,b-a).toFixed(2)} s`;
+  const left=dur?100*a/dur:0,right=dur?100*b/dur:100; const sel=$('waveSelection');sel.style.left=`${left}%`;sel.style.width=`${Math.max(0,right-left)}%`;
+}
+async function openMediaEditor(){
+  const profile=$('recordingsProfile').value;if(!profile){toast('Import','Wybierz profil.','error');return}
+  const b=$('importMediaBtn');try{b.disabled=true;b.textContent='Importuję…';const r=await api('begin_media_import',profile);if(r.cancelled)return;mediaSession=r;$('mediaSourceName').textContent=r.source_name;$('mediaStartRange').max=r.duration_seconds;$('mediaEndRange').max=r.duration_seconds;$('mediaStartRange').value=0;$('mediaEndRange').value=r.duration_seconds;$('mediaTranscript').value='';$('mediaEditor').classList.remove('hidden');requestAnimationFrame(()=>{drawMediaWave(r.peaks);updateMediaSelection()});$('mediaEditorStatus').textContent=`Źródło: ${r.source_name} · ${Number(r.duration_seconds).toFixed(2)} s. Zaznacz fragment z właściwym głosem.`}catch(e){toast('Import pliku',e.message,'error')}finally{b.disabled=false;b.textContent='＋ Importuj audio / film'}}
+async function closeMediaEditor(){if(mediaSession){try{await api('close_media_import',mediaSession.session_id)}catch(e){}}mediaSession=null;$('mediaEditor').classList.add('hidden')}
+async function previewMedia(){if(!mediaSession)return;try{$('mediaEditorStatus').textContent='Odtwarzam zaznaczony fragment…';await api('preview_media_clip',mediaSession.session_id,Number($('mediaStartRange').value),Number($('mediaEndRange').value))}catch(e){toast('Podgląd',e.message,'error')}}
+async function saveMedia(){if(!mediaSession)return;const profile=$('recordingsProfile').value;const b=$('saveMediaClip');try{b.disabled=true;b.textContent='Zapisuję…';const r=await api('save_media_clip',profile,mediaSession.session_id,Number($('mediaStartRange').value),Number($('mediaEndRange').value),$('mediaTranscript').value);$('mediaEditorStatus').textContent=`Zapisano ${r.sample.id} · ${Number(r.sample.duration_seconds).toFixed(2)} s.`;await loadRecordings();await refreshState();toast('Próbka zapisana',`${r.sample.id} z ${r.sample.source_name}`,'success')}catch(e){toast('Zapis próbki',e.message,'error')}finally{b.disabled=false;b.textContent='✦ Zapisz jako próbkę'}}
+function wireRecordingLibrary(){
+  if(!$('recordingsProfile'))return; syncRecordingProfileOptions(); $('recordingsProfile').onchange=loadRecordings; $('importMediaBtn').onclick=openMediaEditor; $('mediaStartRange').oninput=updateMediaSelection;$('mediaEndRange').oninput=updateMediaSelection;$('previewMediaClip').onclick=previewMedia;$('saveMediaClip').onclick=saveMedia;$('closeMediaEditor').onclick=closeMediaEditor;$('mediaEditor').onclick=e=>{if(e.target===$('mediaEditor'))closeMediaEditor()}; window.addEventListener('resize',()=>{if(mediaSession)drawMediaWave(mediaSession.peaks)}); loadRecordings();
+}
+window.addEventListener('pywebviewready',()=>setTimeout(wireRecordingLibrary,80));

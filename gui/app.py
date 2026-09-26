@@ -23,7 +23,8 @@ from storage.profile_manager import ProfileManager
 from system.hardware import detect_hardware
 from system.cuda_manager import CudaRepairManager
 from system.windows_integration import prepare_windows_process, setup_windows_shell_async
-from training.dataset import add_sample, get_stats
+from training.dataset import add_sample, get_stats, list_samples, delete_sample, update_sample_text
+from training.media_library import begin_import, make_preview, save_clip, close_session
 from training.text_bank import build_prompt, remember_prompt
 from training.manager import TrainingManager
 from updater.update_manager import check_for_update, download_update, launch_apply
@@ -192,6 +193,104 @@ class SoundCoreApi:
         return {"ok": True}
 
 
+
+    def list_profile_recordings(self, profile_name: str) -> dict:
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Nie znaleziono profilu.")
+        rows = [{
+            "id": "reference",
+            "kind": "reference",
+            "name": "Próbka referencyjna",
+            "text": "",
+            "duration_seconds": profile.duration_seconds,
+            "source_name": "Nagranie profilu",
+            "wav_path": profile.wav_path,
+            "deletable": False,
+        }]
+        for sample in list_samples(profile.folder):
+            rows.append({
+                **sample,
+                "kind": "dataset",
+                "name": sample["id"],
+                "deletable": True,
+            })
+        return {"ok": True, "profile": profile_name, "recordings": rows, "stats": get_stats(profile.folder).to_dict()}
+
+    def play_profile_recording(self, profile_name: str, recording_id: str) -> dict:
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Nie znaleziono profilu.")
+        if recording_id == "reference":
+            path = profile.wav_path
+        else:
+            item = next((x for x in list_samples(profile.folder) if x["id"] == recording_id), None)
+            if item is None:
+                raise ValueError("Nie znaleziono nagrania.")
+            path = item["wav_path"]
+        threading.Thread(target=lambda: play_wav(path), daemon=True).start()
+        return {"ok": True}
+
+    def delete_profile_recording(self, profile_name: str, recording_id: str) -> dict:
+        if recording_id == "reference":
+            raise ValueError("Próbki referencyjnej nie można usunąć. Nagraj nową referencję dla profilu.")
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Nie znaleziono profilu.")
+        if not delete_sample(profile.folder, recording_id):
+            raise ValueError("Nie znaleziono nagrania.")
+        self._notify("Próbka usunięta", f"Usunięto {recording_id} z profilu {profile_name}.", "info")
+        return self.list_profile_recordings(profile_name)
+
+    def update_profile_recording_text(self, profile_name: str, recording_id: str, text: str) -> dict:
+        if recording_id == "reference":
+            raise ValueError("Referencja profilu nie używa transkrypcji datasetu.")
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Nie znaleziono profilu.")
+        update_sample_text(profile.folder, recording_id, text)
+        return self.list_profile_recordings(profile_name)
+
+    def begin_media_import(self, profile_name: str) -> dict:
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Nie znaleziono profilu.")
+        win = webview.active_window()
+        if win is None:
+            raise RuntimeError("Okno SoundCore nie jest gotowe.")
+        dialog_open = getattr(webview.FileDialog, "OPEN", None) or getattr(webview.FileDialog, "LOAD")
+        selected = win.create_file_dialog(
+            dialog_open,
+            allow_multiple=False,
+            file_types=(
+                "Audio i wideo (*.wav;*.mp3;*.flac;*.m4a;*.aac;*.ogg;*.wma;*.mp4;*.mov;*.mkv;*.avi;*.webm;*.m4v)",
+                "Wszystkie pliki (*.*)",
+            ),
+        )
+        if not selected:
+            return {"ok": False, "cancelled": True}
+        data = begin_import(selected[0])
+        data["ok"] = True
+        data["profile"] = profile_name
+        return data
+
+    def preview_media_clip(self, session_id: str, start: float, end: float) -> dict:
+        path = make_preview(session_id, start, end)
+        threading.Thread(target=lambda: play_wav(path), daemon=True).start()
+        return {"ok": True}
+
+    def save_media_clip(self, profile_name: str, session_id: str, start: float, end: float, text: str = "") -> dict:
+        profile = self._profile_manager.get_profile(profile_name)
+        if profile is None:
+            raise ValueError("Nie znaleziono profilu.")
+        sample = save_clip(profile.folder, session_id, start, end, text)
+        self._notify("Zaimportowano próbkę", f"{sample['id']} · {sample['duration_seconds']} s z pliku {sample['source_name']}", "success")
+        return {"ok": True, "sample": sample, "recordings": self.list_profile_recordings(profile_name)["recordings"], "stats": get_stats(profile.folder).to_dict()}
+
+    def close_media_import(self, session_id: str) -> dict:
+        close_session(session_id)
+        return {"ok": True}
+
     def cuda_repair_status(self) -> dict:
         self._hardware = detect_hardware()
         self._cuda_repair.reconcile(self._hardware.torch_cuda_available)
@@ -237,8 +336,9 @@ class SoundCoreApi:
         if profile is None:
             raise ValueError("Nie znaleziono profilu.")
         stats = get_stats(profile.folder)
-        if stats.samples < 3:
-            raise ValueError("Dodaj co najmniej 3 próbki treningowe. Dla sensownego modelu zalecane jest 10–15 minut lub więcej.")
+        transcribed = [x for x in list_samples(profile.folder) if (x.get("text") or "").strip()]
+        if len(transcribed) < 3:
+            raise ValueError("Dodaj co najmniej 3 próbki z transkrypcją. Próbki audio bez tekstu zostają w bibliotece, ale XTTS nie może na nich trenować.")
         requested = (device or "auto").lower()
         if requested == "auto":
             requested = "gpu" if self._hardware.torch_cuda_available else "cpu"
@@ -307,6 +407,14 @@ def run() -> None:
         api.delete_profile,
         api.synthesize,
         api.play_last_generated,
+        api.list_profile_recordings,
+        api.play_profile_recording,
+        api.delete_profile_recording,
+        api.update_profile_recording_text,
+        api.begin_media_import,
+        api.preview_media_clip,
+        api.save_media_clip,
+        api.close_media_import,
         api.cuda_repair_status,
         api.install_cuda_runtime,
         api.open_data_folder,

@@ -256,3 +256,6 @@ Od wersji 0.3.6 SoundCore zapisuje użyte prompty w `voice_profiles/<profil>/pro
 ### Wyszukiwanie i menu użytkownika
 
 Globalną wyszukiwarkę otwiera `Ctrl+K`. Wyszukuje moduły SoundCore i profile głosowe. Menu użytkownika w prawym górnym rogu udostępnia ustawienia, katalog SoundCore, restart programu i informacje o wersji.
+
+## Recording library and media import (0.3.8)
+Each voice profile now has its own recording library. SoundCore can import audio and video files, extract mono audio with FFmpeg, display a waveform, trim a selected range, preview it, and save only that clip into the profile dataset. Imported samples keep source/trim metadata and their transcript can be edited later.

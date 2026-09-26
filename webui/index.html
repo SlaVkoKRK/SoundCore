@@ -124,6 +124,7 @@
       <div class="page-grid profiles-layout">
         <article class="card"><div class="card-head"><div><span class="eyebrow blue">NAGRANIE REFERENCYJNE</span><h2>Nowy profil głosu</h2><p>Nagraj czystą próbkę głosu jako bazę syntezy.</p></div></div><div class="form-grid"><label><span>Nazwa profilu</span><input id="newProfileName" placeholder="np. Sławomir PL"/></label><label><span>Mikrofon</span><select id="profileDevice"></select></label><label><span>Długość</span><select id="profileDuration"><option value="10">10 sekund</option><option value="20" selected>20 sekund</option><option value="30">30 sekund</option><option value="45">45 sekund</option></select></label></div><label class="reading-block"><span>Tekst do przeczytania <small id="profilePromptMeta">dopasowany do 20 s</small></span><textarea id="profileReadingText" class="sentence" readonly></textarea></label><div class="action-row"><button id="recordProfileBtn" class="btn btn-gradient">● Rozpocznij nagrywanie</button><button id="profileNewPrompt" class="btn btn-soft">↻ Inny tekst</button></div><div id="recordProfileStatus" class="status-box">Gotowy do nagrywania. Czytaj tekst naturalnie i utrzymuj równe tempo.</div></article>
         <article class="card"><div class="card-head"><div><span class="eyebrow violet">BIBLIOTEKA</span><h2>Twoje profile</h2><p>Odsłuchuj i zarządzaj zapisanymi głosami.</p></div></div><div id="profilesTable" class="profiles-table"></div></article>
+        <article class="card recordings-card"><div class="card-head"><div><span class="eyebrow green">BAZA NAGRAŃ</span><h2>Nagrania profilu</h2><p>Referencja, próbki treningowe oraz import audio i wideo.</p></div><div class="recording-actions"><select id="recordingsProfile"></select><button id="importMediaBtn" class="btn btn-gradient small">＋ Importuj audio / film</button></div></div><div id="recordingsStats" class="recordings-stats">Wybierz profil, aby wyświetlić jego nagrania.</div><div id="recordingsList" class="recordings-list"></div></article>
       </div>
     </section>
 
@@ -145,7 +146,21 @@
       <div class="page-grid settings-layout"><article class="card"><div class="card-head"><div><span class="eyebrow blue">APLIKACJA</span><h2>SoundCore</h2><p>Informacje o instalacji.</p></div></div><div class="settings-list"><div><span>Wersja</span><b id="settingsVersion">—</b></div><div><span>Użytkownik Windows</span><b id="settingsUser">—</b></div><div><span>Model</span><b>XTTS v2</b></div><div><span>Interfejs</span><b>Modern Light WebUI</b></div></div></article><article class="card"><div class="card-head"><div><span class="eyebrow green">SPRZĘT</span><h2>Akceleracja</h2><p>Stan GPU i PyTorch.</p></div></div><div class="settings-list"><div><span>GPU</span><b id="settingsGpu">—</b><small id="settingsGpuExtra">—</small></div><div><span>CUDA</span><b id="settingsCuda">—</b></div></div></article></div>
     </section>
 
-    <div id="toastHost" class="toast-host"></div>
+    <div id="mediaEditor" class="media-modal hidden">
+  <div class="media-editor-card">
+    <div class="media-editor-head"><div><span class="eyebrow violet">EDYTOR PRÓBKI</span><h2 id="mediaSourceName">Import audio</h2><p>Wytnij tylko fragment, na którym mówi właściwa osoba.</p></div><button id="closeMediaEditor" class="icon-close">×</button></div>
+    <div class="wave-editor"><canvas id="mediaWaveCanvas" width="1100" height="220"></canvas><div class="wave-selection" id="waveSelection"></div></div>
+    <div class="trim-grid">
+      <label><span>START</span><input id="mediaStartRange" type="range" min="0" max="1" step="0.01" value="0"><b id="mediaStartLabel">0.00 s</b></label>
+      <label><span>KONIEC</span><input id="mediaEndRange" type="range" min="0" max="1" step="0.01" value="1"><b id="mediaEndLabel">0.00 s</b></label>
+      <div class="clip-length"><span>Długość wycinka</span><b id="mediaClipLength">0.00 s</b></div>
+    </div>
+    <label class="media-transcript"><span>Tekst / transkrypcja próbki <small>opcjonalnie teraz, zalecane przed treningiem XTTS</small></span><textarea id="mediaTranscript" placeholder="Wpisz dokładnie to, co mówi osoba w zaznaczonym fragmencie..."></textarea></label>
+    <div id="mediaEditorStatus" class="status-box">Przesuń START i KONIEC, odsłuchaj fragment i zapisz próbkę.</div>
+    <div class="action-row media-editor-actions"><button id="previewMediaClip" class="btn btn-soft">▶ Odsłuchaj wycinek</button><button id="saveMediaClip" class="btn btn-gradient">✦ Zapisz jako próbkę</button></div>
+  </div>
+</div>
+<div id="toastHost" class="toast-host"></div>
   </main>
 </div>
 <script src="app.js"></script>
