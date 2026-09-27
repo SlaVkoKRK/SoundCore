@@ -1,3 +1,13 @@
+# SoundCore 0.8.0
+
+## DiffRhythm CUDA repair
+- Naprawiono `WinError 5: Odmowa dostępu` podczas podmiany CPU-only PyTorch na build CUDA.
+- Przed naprawą CUDA SoundCore zatrzymuje aktywny render i czeka na zamknięcie procesu inferencji.
+- SoundCore kończy wyłącznie procesy Pythona uruchomione z prywatnego venv DiffRhythm.
+- Dodano kontrolę zwolnienia `torch/_C*.pyd` przed uruchomieniem pip.
+- Usuwane są pozostałości po przerwanych instalacjach pip, np. katalogi `~orch*`.
+- Po instalacji nadal wykonywana jest weryfikacja `torch.cuda.is_available()` oraz nazwy GPU.
+
 # SoundCore 0.7.9
 
 ## DiffRhythm CUDA

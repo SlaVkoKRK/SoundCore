@@ -200,6 +200,69 @@ class SongManager:
         except Exception:
             return False
 
+    def _stop_diffrhythm_runtime_processes(self) -> None:
+        """Stop renderer/runtime Python processes that can keep torch DLL/PYD files locked."""
+        self._cancel.set()
+
+        # Stop processes we own directly first.
+        for attr in ("_process", "_install_process"):
+            proc = getattr(self, attr, None)
+            if proc is not None and proc.poll() is None:
+                try:
+                    proc.terminate()
+                    proc.wait(timeout=8)
+                except Exception:
+                    try:
+                        proc.kill()
+                        proc.wait(timeout=5)
+                    except Exception:
+                        pass
+            setattr(self, attr, None)
+
+        if os.name != "nt":
+            time.sleep(1.0)
+            return
+
+        # Kill only Python processes launched from DiffRhythm's private venv.
+        venv_root = str((self.runtime_dir / "venv").resolve()).replace("\\", "\\\\")
+        ps = (
+            "$root='" + venv_root.replace("'", "''") + "'; "
+            "Get-CimInstance Win32_Process | "
+            "Where-Object { $_.ExecutablePath -and $_.ExecutablePath -like ($root + '*') } | "
+            "ForEach-Object { "
+            "  try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} "
+            "}"
+        )
+        try:
+            self._run_hidden(
+                ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-Command", ps],
+                cwd=str(self.repo_dir),
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=20,
+                check=False,
+            )
+        except Exception:
+            pass
+
+        # Windows/AV can keep extension modules mapped for a brief moment after process exit.
+        time.sleep(2.5)
+
+    def _torch_file_unlock_probe(self) -> bool:
+        """Best-effort check that the main torch extension can be renamed/opened by pip."""
+        torch_dir = self.runtime_dir / "venv" / "Lib" / "site-packages" / "torch"
+        candidates = list(torch_dir.glob("_C*.pyd"))
+        if not candidates:
+            return True
+        target = candidates[0]
+        try:
+            with target.open("rb+"):
+                return True
+        except PermissionError:
+            return False
+        except OSError:
+            return False
+
     def repair_cuda_runtime(self) -> dict:
         st = self._torch_runtime_status()
         if st.get('cuda'):
@@ -215,14 +278,37 @@ class SongManager:
     def _repair_cuda_worker(self) -> None:
         py = str(self.venv_python)
         try:
-            self._set_install('cuda_repair', 8, 'Usuwanie CPU-only PyTorch…')
+            self._set_install('cuda_repair', 4, 'Zatrzymuję render i zwalniam pliki PyTorch…')
+            self._stop_diffrhythm_runtime_processes()
+
+            for attempt in range(4):
+                if self._torch_file_unlock_probe():
+                    break
+                self._set_install('cuda_repair', 5 + attempt, f'Czekam na zwolnienie torch/_C.pyd… próba {attempt + 1}/4')
+                time.sleep(2.0)
+            if not self._torch_file_unlock_probe():
+                raise RuntimeError('Pliki PyTorch są nadal używane przez inny proces. Zamknij wszystkie procesy Python korzystające z DiffRhythm i spróbuj ponownie.')
+
+            self._set_install('cuda_repair', 10, 'Usuwanie CPU-only PyTorch…')
             self._run_hidden([py, '-m', 'pip', 'uninstall', '-y', 'torch', 'torchaudio', 'torchvision'], cwd=str(self.repo_dir), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
-            self._set_install('cuda_repair', 15, 'Pobieranie PyTorch 2.6.0 CUDA 12.4…')
+
+            # Remove stale partial-install folders left by failed pip operations, e.g. ~orch.
+            site_packages = self.runtime_dir / 'venv' / 'Lib' / 'site-packages'
+            for stale in site_packages.glob('~orch*'):
+                try:
+                    if stale.is_dir():
+                        shutil.rmtree(stale, ignore_errors=True)
+                    else:
+                        stale.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
+            self._set_install('cuda_repair', 18, 'Pobieranie PyTorch 2.6.0 CUDA 12.4…')
             cmd = [py, '-m', 'pip', 'install', '--no-cache-dir',
                    'torch==2.6.0', 'torchvision==0.21.0', 'torchaudio==2.6.0',
                    '--index-url', 'https://download.pytorch.org/whl/cu124',
                    '--disable-pip-version-check', '--no-input', '--progress-bar', 'off']
-            progress = 15
+            progress = 18
             with self.log_path.open('a', encoding='utf-8', errors='replace', buffering=1) as log:
                 log.write('\n[SoundCore] Naprawa CUDA DiffRhythm\n')
                 log.write('COMMAND: ' + ' '.join(cmd) + '\n')
