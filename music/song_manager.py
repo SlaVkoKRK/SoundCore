@@ -79,6 +79,10 @@ class SongManager:
         self._install_last_activity: Optional[float] = None
         self._cancel = threading.Event()
         self._process: Optional[subprocess.Popen] = None
+        self._composer_process: Optional[subprocess.Popen] = None
+        self._composer_lock = threading.Lock()
+        self._composer_cancel = threading.Event()
+        self._composer_status = {"state":"idle","progress":0,"message":"AUTO COMPOSER gotowy."}
         self._model_download = {"state": "idle", "stage": "", "file": "", "downloaded_bytes": 0, "expected_bytes": 0, "speed_bps": 0, "items": {}}
 
     @property
@@ -223,13 +227,17 @@ class SongManager:
             time.sleep(1.0)
             return
 
-        # Kill only Python processes launched from DiffRhythm's private venv.
-        venv_root = str((self.runtime_dir / "venv").resolve()).replace("\\", "\\\\")
+        # Kill processes that belong to DiffRhythm by executable path OR command line.
+        # Do not escape backslashes for PowerShell single-quoted strings; doubled
+        # backslashes caused 0.8.0 to match nothing on Windows.
+        runtime_root = str(self.runtime_dir.resolve())
         ps = (
-            "$root='" + venv_root.replace("'", "''") + "'; "
+            "$root='" + runtime_root.replace("'", "''") + "'; "
             "Get-CimInstance Win32_Process | "
-            "Where-Object { $_.ExecutablePath -and $_.ExecutablePath -like ($root + '*') } | "
-            "ForEach-Object { "
+            "Where-Object { "
+            " ($_.ExecutablePath -and $_.ExecutablePath.StartsWith($root,[System.StringComparison]::OrdinalIgnoreCase)) -or "
+            " ($_.CommandLine -and $_.CommandLine.IndexOf($root,[System.StringComparison]::OrdinalIgnoreCase) -ge 0) "
+            "} | ForEach-Object { "
             "  try { Stop-Process -Id $_.ProcessId -Force -ErrorAction Stop } catch {} "
             "}"
         )
@@ -249,18 +257,25 @@ class SongManager:
         time.sleep(2.5)
 
     def _torch_file_unlock_probe(self) -> bool:
-        """Best-effort check that the main torch extension can be renamed/opened by pip."""
+        """Windows-safe lock test: rename the loaded extension and immediately restore it."""
         torch_dir = self.runtime_dir / "venv" / "Lib" / "site-packages" / "torch"
         candidates = list(torch_dir.glob("_C*.pyd"))
         if not candidates:
             return True
         target = candidates[0]
+        probe = target.with_name(target.name + ".soundcore_unlock_test")
         try:
-            with target.open("rb+"):
-                return True
-        except PermissionError:
-            return False
-        except OSError:
+            if probe.exists():
+                probe.unlink()
+            target.rename(probe)
+            probe.rename(target)
+            return True
+        except (PermissionError, OSError):
+            try:
+                if probe.exists() and not target.exists():
+                    probe.rename(target)
+            except Exception:
+                pass
             return False
 
     def repair_cuda_runtime(self) -> dict:
@@ -649,8 +664,7 @@ class SongManager:
             log.write("SoundCore model prefetch\n")
             while proc.poll() is None or not q.empty():
                 if self._cancel.is_set():
-                    try: proc.terminate()
-                    except Exception: pass
+                    self._kill_process_tree(proc)
                     raise RuntimeError("Pobieranie modeli przerwane.")
                 try:
                     while True:
@@ -833,7 +847,7 @@ class SongManager:
                     )
                     while self._process.poll() is None:
                         if self._cancel.is_set():
-                            self._process.terminate()
+                            self._kill_process_tree(self._process)
                             self._generation_status = {"state": "cancelled", "progress": 0, "message": "Render przerwany.", "project_id": pid}
                             return
                         time.sleep(0.5)
@@ -859,9 +873,109 @@ class SongManager:
             finally:
                 self._process = None
 
+    def _kill_process_tree(self, proc: Optional[subprocess.Popen]) -> None:
+        if proc is None or proc.poll() is not None:
+            return
+        if os.name == "nt":
+            try:
+                subprocess.run(
+                    ["taskkill", "/PID", str(proc.pid), "/T", "/F"],
+                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                    creationflags=self._hidden_creationflags(), timeout=15, check=False,
+                )
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+                return
+            except Exception:
+                pass
+        try:
+            proc.terminate(); proc.wait(timeout=5)
+        except Exception:
+            try: proc.kill()
+            except Exception: pass
+
+    def start_composer(self, brief: str, project: dict) -> dict:
+        brief = (brief or "").strip()
+        if not brief:
+            raise ValueError("Opisz, jaką piosenkę mam wymyślić.")
+        if self._composer_process and self._composer_process.poll() is None:
+            raise RuntimeError("AUTO COMPOSER już pracuje.")
+        if not self.venv_python.exists():
+            raise RuntimeError("Najpierw zainstaluj DiffRhythm — AUTO COMPOSER używa jego izolowanego runtime.")
+        self._composer_cancel.clear()
+        self._composer_status = {"state":"starting","progress":5,"message":"Przygotowanie lokalnego AI Composer…"}
+        threading.Thread(target=self._composer_worker, args=(brief, dict(project or {})), name="SoundCoreSongComposer", daemon=True).start()
+        return self.composer_status()
+
+    def composer_status(self) -> dict:
+        data = dict(self._composer_status)
+        data["running"] = bool(self._composer_process and self._composer_process.poll() is None) or data.get("state") in {"starting","loading","thinking"}
+        return data
+
+    def cancel_composer(self) -> dict:
+        self._composer_cancel.set()
+        self._kill_process_tree(self._composer_process)
+        self._composer_process = None
+        self._composer_status = {"state":"cancelled","progress":0,"message":"AUTO COMPOSER zatrzymany."}
+        return self.composer_status()
+
+    def _composer_worker(self, brief: str, project: dict) -> None:
+        with self._composer_lock:
+            try:
+                helper = BASE_DIR / "music" / "composer_ai.py"
+                if not helper.exists():
+                    raise RuntimeError("Brakuje modułu AUTO COMPOSER.")
+                tmp = self.runtime_dir / "composer"
+                tmp.mkdir(parents=True, exist_ok=True)
+                stamp = str(int(time.time()*1000))
+                inp = tmp / f"input_{stamp}.json"
+                out = tmp / f"output_{stamp}.json"
+                inp.write_text(json.dumps({"brief":brief,"project":project}, ensure_ascii=False, indent=2), encoding="utf-8")
+                cmd = [str(self.venv_python), str(helper), str(inp), str(out)]
+                env = os.environ.copy()
+                env["PYTHONUTF8"] = "1"
+                env["PYTHONUNBUFFERED"] = "1"
+                # Composer works on CPU so it never fights DiffRhythm for 6 GB VRAM.
+                env["CUDA_VISIBLE_DEVICES"] = ""
+                self._composer_status = {"state":"loading","progress":20,"message":"Ładowanie lokalnego Qwen2.5 Composer (pierwszy raz pobiera model)…"}
+                proc = subprocess.Popen(cmd, cwd=str(BASE_DIR), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", bufsize=1, creationflags=self._hidden_creationflags())
+                self._composer_process = proc
+                lines=[]
+                assert proc.stdout is not None
+                for raw in proc.stdout:
+                    line=raw.rstrip("\r\n")
+                    lines.append(line)
+                    if len(lines)>80: lines=lines[-80:]
+                    if line.startswith("SC_COMPOSER_MODEL_READY"):
+                        self._composer_status = {"state":"thinking","progress":55,"message":"AI układa strukturę, harmonię, hook i tekst…","log_tail":lines}
+                    elif line:
+                        self._composer_status = {**self._composer_status,"log_tail":lines}
+                    if self._composer_cancel.is_set():
+                        self._kill_process_tree(proc)
+                        self._composer_status = {"state":"cancelled","progress":0,"message":"AUTO COMPOSER zatrzymany."}
+                        return
+                rc=proc.wait(); self._composer_process=None
+                if rc!=0:
+                    raise RuntimeError("AUTO COMPOSER zakończył się błędem. " + (lines[-1] if lines else f"kod {rc}"))
+                if not out.exists():
+                    raise RuntimeError("AUTO COMPOSER nie zwrócił planu utworu.")
+                plan=json.loads(out.read_text(encoding="utf-8"))
+                merged=dict(project)
+                for key in ("title","language","duration_seconds","bpm","key","time_signature","style","lyrics","chords","composer_hook","composer_structure","composer_notes"):
+                    if key in plan and plan[key] not in (None,""):
+                        merged[key]=plan[key]
+                saved=self.save_project(merged)["project"] if merged.get("project_id") else merged
+                self._composer_status={"state":"completed","progress":100,"message":"Plan utworu gotowy. Sprawdź strukturę i kliknij Generuj piosenkę.","project":saved,"plan":plan,"log_tail":lines}
+            except Exception as exc:
+                self._composer_process=None
+                self._composer_status={"state":"error","progress":0,"message":str(exc)}
+
     def cancel_generation(self) -> dict:
         self._cancel.set()
-        if self._process and self._process.poll() is None:
-            try: self._process.terminate()
-            except Exception: pass
+        self._generation_status = {**self._generation_status, "state":"cancelling", "message":"Zatrzymuję cały proces DiffRhythm…"}
+        self._kill_process_tree(self._process)
+        self._process = None
+        self._generation_status = {**self._generation_status, "state":"cancelled", "progress":0, "message":"Render piosenki zatrzymany."}
         return self.generation_status()

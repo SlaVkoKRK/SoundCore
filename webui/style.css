@@ -96,3 +96,9 @@ html,body,.main,.notification-list,.sidebar .nav{
 
 /* SoundCore 0.7.9 - DiffRhythm runtime diagnostics */
 .engine-runtime-grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:8px;margin:10px 0}.engine-runtime-item{padding:10px 12px;border:1px solid var(--line);border-radius:12px;background:#fafcff}.engine-runtime-item span{display:block;font-size:9px;color:#7d899d;margin-bottom:3px}.engine-runtime-item b{display:block;font-size:10px;color:var(--text);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}@media(max-width:900px){.engine-runtime-grid{grid-template-columns:repeat(2,minmax(0,1fr))}}
+
+/* SoundCore 0.9.0 - AUTO COMPOSER */
+.auto-composer-card{border-color:#e6e0ff;background:linear-gradient(180deg,#fcfbff 0%,#ffffff 100%)}
+.auto-composer-card .reading-block{margin-top:4px}
+.auto-composer-card .song-lrc-preview{margin-top:12px;min-height:110px;max-height:260px}
+.auto-composer-card .progress{margin-top:10px}

@@ -182,8 +182,16 @@
           <div id="songProjectList" class="song-project-list"><div class="status-box">Brak projektów.</div></div>
         </aside>
         <div class="music-main-column">
+          <article class="card auto-composer-card">
+            <div class="card-head"><div><span class="eyebrow violet">AUTO COMPOSER</span><h2>AI najpierw układa piosenkę</h2><p>Opisz klimat i temat. Lokalny Qwen tworzy strukturę, harmonię, hook i tekst, a DiffRhythm dopiero to renderuje.</p></div><span class="status-pill neutral">LOCAL AI</span></div>
+            <label class="reading-block"><span>Brief piosenki</span><textarea id="songComposerBrief" class="song-style-editor" placeholder="Np. Polski nowoczesny pop-rock. Nocna jazda po mieście po rozstaniu. Melancholijne zwrotki, mocny chwytliwy refren, 110 BPM, męski wokal."></textarea></label>
+            <div class="action-row"><button id="runSongComposer" class="btn btn-gradient">✦ Wymyśl cały utwór</button><button id="stopSongComposer" class="btn btn-danger-outline" disabled>■ STOP AI</button></div>
+            <div id="songComposerStatus" class="status-box">Gotowy. Pierwsze użycie pobierze lokalny model Qwen2.5 0.5B.</div>
+            <div class="progress"><span id="songComposerProgress"></span></div>
+            <pre id="songComposerPlan" class="song-lrc-preview">Tutaj pojawi się plan: struktura, hook, akordy i uwagi produkcyjne.</pre>
+          </article>
           <article class="card song-composer-card">
-            <div class="card-head"><div><span class="eyebrow blue">KOMPOZYTOR</span><h2 id="songProjectHeading">Nowa piosenka</h2><p>Struktura, tekst, harmonia i parametry generacji w jednym miejscu.</p></div><span id="musicEngineBadge" class="status-pill neutral">DIFFRHYTHM</span></div>
+            <div class="card-head"><div><span class="eyebrow blue">PLAN UTWORU</span><h2 id="songProjectHeading">Nowa piosenka</h2><p>Możesz poprawić ręcznie plan wygenerowany przez AUTO COMPOSER przed renderem.</p></div><span id="musicEngineBadge" class="status-pill neutral">DIFFRHYTHM</span></div>
             <div class="form-grid song-meta-grid">
               <label><span>Tytuł</span><input id="songTitle" placeholder="Tytuł utworu"/></label>
               <label><span>Język</span><select id="songLanguage"><option value="pl">Polski</option><option value="en">English</option></select></label>
@@ -212,7 +220,7 @@ Chorus: Ab - Eb - Bb - Cm</textarea></label>
                 <label><span>Segmenty edycji (sekundy)</span><input id="songEditSegments" value="[[20,40]]" placeholder="[[20,40],[70,90]]"/></label>
               </div>
             </div>
-            <div class="action-row"><button id="saveSongProject" class="btn btn-soft">Zapisz projekt</button><button id="previewSongLrc" class="btn btn-soft">Podgląd timeline LRC</button><button id="generateSong" class="btn btn-gradient">♫ Generuj piosenkę</button><button id="stopSongGeneration" class="btn btn-danger-outline hidden">■ STOP</button></div>
+            <div class="action-row"><button id="saveSongProject" class="btn btn-soft">Zapisz projekt</button><button id="previewSongLrc" class="btn btn-soft">Podgląd timeline LRC</button><button id="generateSong" class="btn btn-gradient">♫ Generuj piosenkę</button><button id="stopSongGeneration" class="btn btn-danger-outline" disabled>■ STOP RENDER</button></div>
             <div id="songStatus" class="status-box">Gotowy. Pierwszy render może pobierać kilka GB modeli.</div>
             <div class="progress large"><span id="songProgressBar"></span></div>
           </article>

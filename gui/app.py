@@ -891,6 +891,15 @@ class SoundCoreApi:
     def cancel_song_generation(self) -> dict:
         return self._songs.cancel_generation()
 
+    def start_song_composer(self, brief: str, project: dict) -> dict:
+        return self._songs.start_composer(brief, project)
+
+    def song_composer_status(self) -> dict:
+        return self._songs.composer_status()
+
+    def cancel_song_composer(self) -> dict:
+        return self._songs.cancel_composer()
+
     def play_song_render(self, path: str) -> dict:
         target = Path(path)
         if not target.is_file() or self._songs.projects_dir not in target.resolve().parents:
@@ -1006,6 +1015,9 @@ def run() -> None:
         api.start_song_generation,
         api.song_generation_status,
         api.cancel_song_generation,
+        api.start_song_composer,
+        api.song_composer_status,
+        api.cancel_song_composer,
         api.play_song_render,
         api.export_song_render,
         api.cancel_recording,

@@ -1,3 +1,22 @@
+# SoundCore 0.9.0
+
+## AUTO COMPOSER
+- Dodano lokalny AI Composer oparty o Qwen2.5-Instruct.
+- Z jednego briefu powstają: tytuł, BPM, tonacja, metrum, struktura sekcji, akordy, hook, tekst i uwagi produkcyjne.
+- AI Composer działa przed DiffRhythm; renderer dostaje gotowy, uporządkowany plan zamiast luźnego promptu.
+- Composer działa na CPU, żeby nie walczyć o 6 GB VRAM z DiffRhythm.
+- Pierwsze użycie pobiera lokalny model Composer.
+
+## STOP renderu
+- STOP RENDER jest zawsze widoczny i aktywuje się podczas każdej fazy renderu.
+- Na Windows zatrzymywane jest całe drzewo procesu DiffRhythm przez taskkill /T /F, także podczas pobierania modeli.
+- Dodano osobny STOP AI dla AUTO COMPOSER.
+
+## CUDA repair
+- Poprawiono błędny filtr procesów z 0.8.0, który podwajał backslashe i nie znajdował procesu blokującego torch.
+- Procesy są wykrywane zarówno po ExecutablePath, jak i CommandLine.
+- Test blokady torch/_C*.pyd wykonuje realny rename pliku zamiast samego otwarcia.
+
 # SoundCore 0.8.0
 
 ## DiffRhythm CUDA repair
