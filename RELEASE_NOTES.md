@@ -1,3 +1,13 @@
+# SoundCore 0.7.8
+
+## Model downloader DiffRhythm
+- Modele są jawnie pobierane przed startem inferencji.
+- SoundCore doinstalowuje `hf_xet` w izolowanym venv DiffRhythm.
+- Osobny postęp dla CFM, MuQ-MuLan, MuQ audio, XLM-R i VAE.
+- Widoczne MB/GB, procent, aktualny plik i prędkość pobierania.
+- Render startuje dopiero po zakończeniu prefetchu modeli.
+- STOP przerywa również pobieranie modeli.
+
 # SoundCore 0.7.7
 
 ## DiffRhythm

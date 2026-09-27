@@ -15,6 +15,8 @@ from pathlib import Path
 from typing import Optional
 
 
+BASE_DIR = Path(__file__).resolve().parents[1]
+
 DEFAULT_STRUCTURE = """[Intro]\n\n[Verse 1]\n\n[Pre-Chorus]\n\n[Chorus]\n\n[Verse 2]\n\n[Chorus]\n\n[Bridge]\n\n[Final Chorus]\n\n[Outro]\n"""
 
 
@@ -77,6 +79,7 @@ class SongManager:
         self._install_last_activity: Optional[float] = None
         self._cancel = threading.Event()
         self._process: Optional[subprocess.Popen] = None
+        self._model_download = {"state": "idle", "stage": "", "file": "", "downloaded_bytes": 0, "expected_bytes": 0, "speed_bps": 0, "items": {}}
 
     @property
     def repo_dir(self) -> Path:
@@ -421,7 +424,109 @@ class SongManager:
                 data["log_tail"] = []
         else:
             data["log_tail"] = []
+        data["model_download"] = dict(self._model_download)
         return {"ok": True, **data}
+
+    def _cache_size(self) -> int:
+        root = self.repo_dir / "pretrained"
+        total = 0
+        if root.exists():
+            for p in root.rglob("*"):
+                try:
+                    if p.is_file(): total += p.stat().st_size
+                except OSError:
+                    pass
+        return total
+
+    def _ensure_hf_xet(self) -> None:
+        py = str(self.venv_python)
+        probe = self._run_hidden([py, "-c", "import hf_xet"], cwd=str(self.repo_dir), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if getattr(probe, "returncode", 1) == 0:
+            return
+        self._generation_status = {"state":"models","progress":5,"message":"Instaluję szybszy transport Hugging Face (hf_xet)…"}
+        proc = self._run_hidden([py, "-m", "pip", "install", "hf_xet", "--disable-pip-version-check", "--no-input"], cwd=str(self.repo_dir), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        if getattr(proc, "returncode", 1) != 0:
+            raise RuntimeError("Nie udało się zainstalować hf_xet dla DiffRhythm.")
+
+    def _prefetch_models(self, duration: int, project_id: str) -> None:
+        self._ensure_hf_xet()
+        helper = BASE_DIR / "music" / "hf_prefetch.py"
+        if not helper.exists():
+            raise RuntimeError("Brakuje helpera pobierania modeli DiffRhythm.")
+        cache = self.repo_dir / "pretrained"
+        cache.mkdir(parents=True, exist_ok=True)
+        env = os.environ.copy()
+        env["HF_HUB_DISABLE_SYMLINKS_WARNING"] = "1"
+        env["HF_HUB_DISABLE_XET"] = "0"
+        env["PYTHONUTF8"] = "1"
+        env["PYTHONUNBUFFERED"] = "1"
+        cmd = [str(self.venv_python), str(helper), str(cache), str(duration)]
+        before_all = self._cache_size()
+        stage_start_size = before_all
+        last_size = before_all
+        last_time = time.time()
+        current = ""
+        expected = 0
+        items = {}
+        self._model_download = {"state":"starting","stage":"","file":"","downloaded_bytes":0,"expected_bytes":0,"speed_bps":0,"items":items}
+        proc = subprocess.Popen(cmd, cwd=str(self.repo_dir), env=env, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding="utf-8", errors="replace", bufsize=1, creationflags=self._hidden_creationflags())
+        self._process = proc
+        assert proc.stdout is not None
+        import queue
+        q = queue.Queue()
+        def reader():
+            for line in proc.stdout:
+                q.put(line.rstrip("\r\n"))
+        threading.Thread(target=reader, daemon=True).start()
+        with self.log_path.open("w", encoding="utf-8", errors="replace", buffering=1) as log:
+            log.write("SoundCore model prefetch\n")
+            while proc.poll() is None or not q.empty():
+                if self._cancel.is_set():
+                    try: proc.terminate()
+                    except Exception: pass
+                    raise RuntimeError("Pobieranie modeli przerwane.")
+                try:
+                    while True:
+                        line=q.get_nowait()
+                        if line.startswith("SCSTATUS "):
+                            try:
+                                evt=json.loads(line[9:])
+                                if evt.get("event")=="stage":
+                                    current=evt.get("name","")
+                                    expected=int(evt.get("expected_bytes") or 0)
+                                    stage_start_size=self._cache_size()
+                                    items.setdefault(current,{})
+                                    items[current].update({"state":"downloading","expected_bytes":expected,"downloaded_bytes":0,"file":""})
+                                elif evt.get("event")=="file":
+                                    if current:
+                                        items[current]["file"]=evt.get("file","")
+                                elif evt.get("event")=="done":
+                                    nm=evt.get("name",current)
+                                    items.setdefault(nm,{})["state"]="ready"
+                                    items[nm]["downloaded_bytes"]=items[nm].get("expected_bytes",expected)
+                                elif evt.get("event")=="all_done":
+                                    self._model_download["state"]="ready"
+                            except Exception:
+                                pass
+                        else:
+                            log.write(line+"\n")
+                except queue.Empty:
+                    pass
+                now=time.time(); size=self._cache_size(); dt=max(0.2,now-last_time); speed=max(0,int((size-last_size)/dt))
+                downloaded=max(0,size-stage_start_size)
+                if current:
+                    items.setdefault(current,{})
+                    items[current].update({"state":items[current].get("state","downloading"),"downloaded_bytes":downloaded if items[current].get("state")!="ready" else items[current].get("downloaded_bytes",downloaded),"expected_bytes":expected,"speed_bps":speed})
+                total_expected=sum(int(v.get("expected_bytes") or 0) for v in items.values())
+                total_downloaded=sum(min(int(v.get("downloaded_bytes") or 0), int(v.get("expected_bytes") or 0) or int(v.get("downloaded_bytes") or 0)) for v in items.values())
+                pct=10 + int(45*(total_downloaded/max(1,total_expected))) if total_expected else 10
+                self._model_download={"state":"downloading" if proc.poll() is None else self._model_download.get("state","downloading"),"stage":current,"file":items.get(current,{}).get("file","") if current else "","downloaded_bytes":max(0,size-before_all),"expected_bytes":total_expected,"speed_bps":speed,"items":items}
+                self._generation_status={"state":"models","progress":min(55,pct),"message":f"Pobieranie modeli AI: {current or 'przygotowanie'}…","project_id":project_id}
+                last_size=size; last_time=now
+                time.sleep(0.5)
+        if proc.returncode != 0:
+            raise RuntimeError(f"Pobieranie modeli zakończyło się kodem {proc.returncode}. Sprawdź log DiffRhythm.")
+        self._model_download["state"]="ready"
 
     def _ensure_py3langid_compat(self) -> dict:
         """Ensure DiffRhythm gets the py3langid API expected by its bundled LangSegment."""
@@ -488,8 +593,20 @@ class SongManager:
         saved = self.save_project(project)["project"]
         self._cancel.clear()
         self._generation_status = {"state": "starting", "progress": 2, "message": "Przygotowanie projektu…", "project_id": saved["project_id"]}
-        threading.Thread(target=self._generation_worker, args=(saved,), name="SoundCoreSongRender", daemon=True).start()
+        threading.Thread(target=self._generation_entry, args=(saved,), name="SoundCoreSongRender", daemon=True).start()
         return self.generation_status()
+
+    def _generation_entry(self, project: dict) -> None:
+        try:
+            self._prefetch_models(int(project.get("duration_seconds", 95)), project.get("project_id", ""))
+            if self._cancel.is_set():
+                self._generation_status = {"state":"cancelled","progress":0,"message":"Render przerwany.","project_id":project.get("project_id")}
+                return
+            self._process = None
+            self._generation_worker(project)
+        except Exception as exc:
+            self._process = None
+            self._generation_status = {"state":"error","progress":0,"message":str(exc),"project_id":project.get("project_id")}
 
     def _generation_worker(self, project: dict) -> None:
         with self._generation_lock:
@@ -534,7 +651,7 @@ class SongManager:
                 # on Windows, producing ModuleNotFoundError: model. Keep the repo
                 # root as cwd and explicitly prepend it to PYTHONPATH.
                 env["PYTHONPATH"] = str(self.repo_dir) + os.pathsep + env.get("PYTHONPATH", "")
-                self._generation_status = {"state": "rendering", "progress": 15, "message": "DiffRhythm generuje piosenkę. Pierwszy render pobiera również modele…", "project_id": pid}
+                self._generation_status = {"state": "rendering", "progress": 60, "message": "Modele gotowe. Ładowanie do GPU i generowanie piosenki…", "project_id": pid}
                 with self.log_path.open("w", encoding="utf-8", errors="replace", buffering=1) as log:
                     log.write("SoundCore DiffRhythm render\n")
                     log.write("CWD: " + str(self.repo_dir) + "\n")
