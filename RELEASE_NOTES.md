@@ -1,3 +1,14 @@
+# SoundCore 0.7.9
+
+## DiffRhythm CUDA
+- Naprawiono CPU-only PyTorch w izolowanym runtime DiffRhythm.
+- SoundCore wykrywa teraz CUDA bezpośrednio wewnątrz venv DiffRhythm.
+- Dodano przycisk „Napraw CUDA dla DiffRhythm”.
+- Naprawa instaluje zgodny PyTorch 2.6.0 / torchvision 0.21.0 / torchaudio 2.6.0 z CUDA 12.4.
+- Render na komputerze z NVIDIA jest blokowany, jeśli runtime DiffRhythm nadal ma CPU-only PyTorch.
+- Song Studio pokazuje PyTorch runtime, GPU, wersję CUDA oraz G2P/ONNX.
+- Instalacja świeżego DiffRhythm automatycznie naprawia runtime CUDA, jeśli wykryje kartę NVIDIA.
+
 # SoundCore 0.7.8
 
 ## Model downloader DiffRhythm

@@ -172,6 +172,84 @@ class SongManager:
         except Exception as exc:
             self._espeak_install_status = {"state": "error", "progress": 0, "message": str(exc)}
 
+
+    def _torch_runtime_status(self) -> dict:
+        py = self.venv_python
+        if not py.exists():
+            return {"ok": False, "installed": False, "cuda": False, "torch": None, "cuda_version": None, "device": None}
+        code = (
+            "import json, torch; "
+            "print(json.dumps({'torch':torch.__version__,'cuda':bool(torch.cuda.is_available()),"
+            "'cuda_version':torch.version.cuda,'device':torch.cuda.get_device_name(0) if torch.cuda.is_available() else None}))"
+        )
+        try:
+            r = self._run_hidden([str(py), '-c', code], cwd=str(self.repo_dir), capture_output=True, text=True, timeout=30)
+            if r.returncode != 0:
+                return {"ok": False, "installed": True, "cuda": False, "torch": None, "cuda_version": None, "device": None, "error": (r.stderr or r.stdout or '').strip()}
+            data = json.loads((r.stdout or '{}').strip().splitlines()[-1])
+            return {"ok": True, "installed": True, **data}
+        except Exception as exc:
+            return {"ok": False, "installed": True, "cuda": False, "torch": None, "cuda_version": None, "device": None, "error": str(exc)}
+
+    def _nvidia_present(self) -> bool:
+        if os.name != 'nt':
+            return False
+        try:
+            r = self._run_hidden(['nvidia-smi', '-L'], capture_output=True, text=True, timeout=10)
+            return r.returncode == 0 and bool((r.stdout or '').strip())
+        except Exception:
+            return False
+
+    def repair_cuda_runtime(self) -> dict:
+        st = self._torch_runtime_status()
+        if st.get('cuda'):
+            return {"ok": True, "repaired": False, "message": f"CUDA jest już aktywna: {st.get('device')}", "runtime": st}
+        if not self.venv_python.exists():
+            raise RuntimeError('Najpierw zainstaluj DiffRhythm.')
+        if not self._nvidia_present():
+            raise RuntimeError('Nie wykryto karty NVIDIA przez nvidia-smi.')
+        threading.Thread(target=self._repair_cuda_worker, name='SoundCoreDiffRhythmCUDARepair', daemon=True).start()
+        self._install_status = {"state": "cuda_repair", "progress": 2, "message": "Przygotowanie CUDA dla DiffRhythm…"}
+        return {"ok": True, "started": True, "message": self._install_status['message']}
+
+    def _repair_cuda_worker(self) -> None:
+        py = str(self.venv_python)
+        try:
+            self._set_install('cuda_repair', 8, 'Usuwanie CPU-only PyTorch…')
+            self._run_hidden([py, '-m', 'pip', 'uninstall', '-y', 'torch', 'torchaudio', 'torchvision'], cwd=str(self.repo_dir), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+            self._set_install('cuda_repair', 15, 'Pobieranie PyTorch 2.6.0 CUDA 12.4…')
+            cmd = [py, '-m', 'pip', 'install', '--no-cache-dir',
+                   'torch==2.6.0', 'torchvision==0.21.0', 'torchaudio==2.6.0',
+                   '--index-url', 'https://download.pytorch.org/whl/cu124',
+                   '--disable-pip-version-check', '--no-input', '--progress-bar', 'off']
+            progress = 15
+            with self.log_path.open('a', encoding='utf-8', errors='replace', buffering=1) as log:
+                log.write('\n[SoundCore] Naprawa CUDA DiffRhythm\n')
+                log.write('COMMAND: ' + ' '.join(cmd) + '\n')
+                proc = subprocess.Popen(cmd, cwd=str(self.repo_dir), stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, encoding='utf-8', errors='replace', bufsize=1, creationflags=self._hidden_creationflags())
+                self._install_process = proc
+                assert proc.stdout is not None
+                for raw in proc.stdout:
+                    line = raw.rstrip('\r\n')
+                    log.write(line + '\n'); log.flush()
+                    low=line.lower()
+                    if line.startswith('Collecting ') or line.startswith('Downloading '): progress=min(78, progress+2)
+                    elif 'installing collected packages' in low: progress=max(progress, 82)
+                    elif 'successfully installed' in low: progress=94
+                    self._install_status = {"state":"cuda_repair","progress":progress,"message":line[:160] if line else 'pip pracuje…'}
+                rc=proc.wait()
+                self._install_process=None
+            if rc != 0:
+                raise RuntimeError(f'Instalacja CUDA PyTorch nie powiodła się (pip exit {rc}).')
+            self._set_install('cuda_repair', 96, 'Weryfikacja RTX / CUDA…')
+            st=self._torch_runtime_status()
+            if not st.get('cuda'):
+                raise RuntimeError(f"PyTorch zainstalowany, ale CUDA nadal jest niedostępna: {st.get('error') or st.get('torch')}")
+            self._set_install('completed', 100, f"CUDA READY — {st.get('device')} · torch {st.get('torch')} · CUDA {st.get('cuda_version')}")
+        except Exception as exc:
+            self._install_process=None
+            self._set_install('error', self._install_status.get('progress',0), str(exc))
+
     def engine_status(self) -> dict:
         espeak = self._espeak()
         installed = self.venv_python.exists() and (self.repo_dir / "infer" / "infer.py").exists()
@@ -183,6 +261,7 @@ class SongManager:
             "espeak": espeak,
             "install": dict(self._install_status),
             "generation": self.generation_status(),
+            "torch_runtime": self._torch_runtime_status(),
             "low_vram_recommended": True,
         }
 
@@ -311,6 +390,8 @@ class SongManager:
                     raise RuntimeError(f"Instalacja zależności nie powiodła się (pip exit {rc}). Zobacz log w Song Studio.")
                 self._set_install("installing", 93, "Sprawdzam zgodność py3langid…")
                 self._ensure_py3langid_compat()
+                if self._nvidia_present() and not self._torch_runtime_status().get("cuda"):
+                    self._repair_cuda_worker()
                 espeak = self._espeak()
                 if not espeak["ok"]:
                     self._set_install("needs_espeak", 92, "DiffRhythm zainstalowany. Brakuje eSpeak NG dla Windows — zainstaluj eSpeak NG i uruchom SoundCore ponownie.")
@@ -590,6 +671,9 @@ class SongManager:
         if not espeak["ok"]:
             raise RuntimeError("Brakuje eSpeak NG. Zainstaluj eSpeak NG dla Windows i uruchom SoundCore ponownie.")
         self._ensure_py3langid_compat()
+        runtime = self._torch_runtime_status()
+        if self._nvidia_present() and not runtime.get("cuda"):
+            raise RuntimeError("DiffRhythm ma CPU-only PyTorch. Kliknij ‘Napraw CUDA dla DiffRhythm’ i poczekaj na CUDA READY.")
         saved = self.save_project(project)["project"]
         self._cancel.clear()
         self._generation_status = {"state": "starting", "progress": 2, "message": "Przygotowanie projektu…", "project_id": saved["project_id"]}

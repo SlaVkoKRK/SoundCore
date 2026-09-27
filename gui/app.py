@@ -862,6 +862,9 @@ class SoundCoreApi:
     def install_music_engine(self) -> dict:
         return self._songs.install_engine()
 
+    def repair_music_cuda(self) -> dict:
+        return self._songs.repair_cuda_runtime()
+
     def music_engine_install_status(self) -> dict:
         return self._songs.install_status()
 
@@ -996,6 +999,7 @@ def run() -> None:
         api.install_espeak_ng,
         api.espeak_install_status,
         api.install_music_engine,
+        api.repair_music_cuda,
         api.music_engine_install_status,
         api.cancel_music_engine_install,
         api.select_song_audio_file,

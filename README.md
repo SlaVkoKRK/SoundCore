@@ -1,3 +1,5 @@
+**Current release: 0.7.9**
+
 **Current release: 0.7.6**
 
 
